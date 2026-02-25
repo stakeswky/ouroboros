@@ -31,7 +31,7 @@ OPENROUTER_API_KEY = "sk-oNk1Adz6q3FrVDVU3kT68ooQ97q0FT5mBfXXwHmIFyj5ls7f"
 TELEGRAM_BOT_TOKEN = "7633641953:AAFI9FDpehDVS1rikp8i6D08eElpXo58xjc"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_USER = os.environ.get("GITHUB_USER", "")
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "ouroboros")
+GITHUB_REPO = "ouroboros"
 TOTAL_BUDGET_LIMIT = 999999.0  # unlimited
 
 OPENAI_API_KEY = OPENROUTER_API_KEY  # reuse for web search via oogg.top
@@ -89,8 +89,8 @@ if not CHAT_LOG_PATH.exists():
 # ----------------------------
 # 3) Git constants
 # ----------------------------
-BRANCH_DEV = "ouroboros"
-BRANCH_STABLE = "ouroboros-stable"
+BRANCH_DEV = "main"
+BRANCH_STABLE = "main"
 REMOTE_URL = f"https://{GITHUB_TOKEN}:x-oauth-basic@github.com/{GITHUB_USER}/{GITHUB_REPO}.git" if GITHUB_TOKEN else ""
 
 # ----------------------------
@@ -147,13 +147,9 @@ from supervisor.events import dispatch_event
 # ----------------------------
 # 5) Bootstrap repo (skip git ops if no GITHUB_TOKEN)
 # ----------------------------
-if GITHUB_TOKEN and GITHUB_USER:
-    ensure_repo_present()
-    ok, msg = safe_restart(reason="bootstrap", unsynced_policy="rescue_and_reset")
-    if not ok:
-        log.warning(f"Bootstrap warning: {msg}")
-else:
-    log.info("No GITHUB_TOKEN set — skipping git bootstrap. Running from local repo.")
+log.info("Git bootstrap: GITHUB_USER=%s GITHUB_REPO=%s", GITHUB_USER, GITHUB_REPO)
+# Skip git bootstrap — we run from local clone
+# ensure_repo_present()
 
 # ----------------------------
 # 6) Start workers
@@ -399,7 +395,8 @@ while True:
         if chat_id != st.get("owner_chat_id"):
             continue
 
-        log_chat(chat_id, "user", text)
+        user_id = msg.get("from", {}).get("id", chat_id)
+        log_chat("in", chat_id, user_id, text)
 
         # Supervisor commands
         cmd_result = _handle_supervisor_command(text, chat_id, offset)
@@ -410,11 +407,8 @@ while True:
         prefix = cmd_result if isinstance(cmd_result, str) else ""
         try:
             handle_chat_direct(
-                text=prefix + text,
                 chat_id=chat_id,
-                tg=TG,
-                drive_root=DRIVE_ROOT,
-                repo_dir=REPO_DIR,
+                text=prefix + text,
             )
         except Exception as e:
             log.error("chat_direct error: %s", e, exc_info=True)
