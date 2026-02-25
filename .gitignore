@@ -26,3 +26,9 @@ Thumbs.db
 # Release artifacts (not tracked)
 .create_release.py
 .release_notes.md
+
+# External tool directories (not agent code)
+node_modules/
+tools/last30days/
+tools/mcp-bridge/
+tools/frostmem/
