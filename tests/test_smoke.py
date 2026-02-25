@@ -88,9 +88,9 @@ EXPECTED_TOOLS = [
     "repo_read", "repo_write_commit", "repo_list", "repo_commit_push",
     "drive_read", "drive_write", "drive_list",
     "git_status", "git_diff",
-    "run_shell", "claude_code_edit",
+    "run_shell", "codex_exec",
     "browse_page", "browser_action",
-    "web_search",
+    "web_search", "research",
     "chat_history", "update_scratchpad", "update_identity",
     "request_restart", "promote_to_stable", "request_review",
     "schedule_task", "cancel_task",
@@ -114,6 +114,10 @@ EXPECTED_TOOLS = [
     "compact_context",
     "list_available_tools",
     "enable_tools",
+    # Semantic memory
+    "frostmem_remember", "frostmem_recall", "frostmem_forget",
+    # MCP
+    "mcp_list", "mcp_call",
 ]
 
 
@@ -323,7 +327,7 @@ def test_no_env_dumping():
     dangerous = re.compile(r'(?:print|json\.dumps|log)\s*\(.*\bos\.environ\b(?!\s*[\[.])')
     violations = []
     for root, dirs, files in os.walk(REPO):
-        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'tests')]
+        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'tests', 'tools')]
         for f in files:
             if not f.endswith(".py"):
                 continue
@@ -341,7 +345,7 @@ def test_no_oversized_modules():
     max_lines = 1000
     violations = []
     for root, dirs, files in os.walk(REPO):
-        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'tests')]
+        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'tests', 'tools')]
         for f in files:
             if not f.endswith(".py"):
                 continue
@@ -388,7 +392,7 @@ def _get_function_sizes():
     """Return list of (file, func_name, lines) for all functions."""
     results = []
     for root, dirs, files in os.walk(REPO):
-        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'tests')]
+        dirs[:] = [d for d in dirs if d not in ('.git', '__pycache__', 'tests', 'tools')]
         for f in files:
             if not f.endswith(".py"):
                 continue

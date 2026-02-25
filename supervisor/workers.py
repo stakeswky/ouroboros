@@ -14,6 +14,7 @@ import json
 import multiprocessing as mp
 import os
 import pathlib
+import subprocess
 import sys
 import threading
 import time
@@ -21,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from supervisor.state import load_state, append_jsonl
+from supervisor.state import load_state, save_state, append_jsonl
 from supervisor import git_ops
 from supervisor.telegram import send_with_budget
 
@@ -410,6 +411,20 @@ def spawn_workers(n: int = 0) -> None:
     # Force fresh context to ensure workers use latest code
     _CTX = mp.get_context(_WORKER_START_METHOD)
     _EVENT_Q = _CTX.Queue()
+    try:
+        head_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_DIR),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if head_sha:
+            st = load_state()
+            st["current_sha"] = head_sha
+            save_state(st)
+    except Exception:
+        log.debug("Failed to refresh current_sha before spawning workers", exc_info=True)
     events_path = DRIVE_ROOT / "logs" / "events.jsonl"
     try:
         events_offset = int(events_path.stat().st_size)
@@ -584,5 +599,4 @@ def ensure_workers_healthy() -> None:
         # Kill all workers — direct chat via handle_chat_direct still works
         kill_workers()
         CRASH_TS.clear()
-
 
