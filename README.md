@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.3 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.4 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,10 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.2.4 -- loop.py refactor: extract llm_runner
+- **Refactor: loop.py** -- extracted pricing table, `_get_pricing`, `_estimate_cost`, `_call_llm_with_retry`, `_emit_llm_usage_event` (231 lines) into `ouroboros/llm_runner.py`. loop.py: 996→767 lines, under 1000-line module limit (Bible P5).
+- 135 tests passing.
 
 ### v6.2.3 -- context.py refactor: extract health invariants
 - **Refactor: context.py** -- extracted `_build_health_invariants` (126 lines) into `ouroboros/health.py`. context.py: 769->289 lines, well under 1000-line module limit (Bible P5).
