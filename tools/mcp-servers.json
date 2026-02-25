@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "everything": {
+      "command": "mcp-server-everything",
+      "args": [],
+      "env": {}
+    }
+  }
+}
