@@ -262,6 +262,8 @@ def budget_remaining(st: Dict[str, Any]) -> float:
 
 
 def check_openrouter_ground_truth() -> Optional[Dict[str, float]]:
+    return None  # Disabled: using oogg.top, not OpenRouter billing API
+    # --- original code below ---
     """
     Call OpenRouter API to get ground truth usage.
 

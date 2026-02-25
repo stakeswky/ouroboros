@@ -21,7 +21,7 @@ MAX_MODELS = 10
 # Concurrency limit for parallel requests
 CONCURRENCY_LIMIT = 5
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_URL = "https://oogg.top/v1/chat/completions"
 
 
 def get_tools():
