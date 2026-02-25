@@ -588,6 +588,131 @@ def _drain_incoming_messages(
                     pass
 
 
+def _run_one_round(
+    round_idx: int,
+    MAX_ROUNDS: int,
+    messages: List[Dict[str, Any]],
+    tools: "ToolRegistry",
+    llm: "LLMClient",
+    tool_schemas: List[Dict[str, Any]],
+    active_model: str,
+    active_effort: str,
+    max_retries: int,
+    drive_logs: pathlib.Path,
+    task_id: str,
+    event_queue: Optional[queue.Queue],
+    accumulated_usage: Dict[str, Any],
+    task_type: str,
+    llm_trace: Dict[str, Any],
+    emit_progress: Callable[[str], None],
+    incoming_messages: queue.Queue,
+    drive_root: Optional[pathlib.Path],
+    budget_remaining_usd: Optional[float],
+    _owner_msg_seen: set,
+    stateful_executor: "_StatefulToolExecutor",
+) -> Tuple[Optional[str], str, str]:
+    if round_idx > MAX_ROUNDS:
+        finish_reason = f"⚠️ Task exceeded MAX_ROUNDS ({MAX_ROUNDS}). Consider decomposing into subtasks via schedule_task."
+        messages.append({"role": "system", "content": f"[ROUND_LIMIT] {finish_reason}"})
+        try:
+            final_msg, final_cost = _call_llm_with_retry(
+                llm, messages, active_model, None, active_effort,
+                max_retries, drive_logs, task_id, round_idx, event_queue, accumulated_usage, task_type
+            )
+            if final_msg:
+                return (final_msg.get("content") or finish_reason), active_model, active_effort
+            return finish_reason, active_model, active_effort
+        except Exception:
+            log.warning("Failed to get final response after round limit", exc_info=True)
+            return finish_reason, active_model, active_effort
+
+    _maybe_inject_self_check(round_idx, MAX_ROUNDS, messages, accumulated_usage, emit_progress)
+
+    ctx = tools._ctx
+    if ctx.active_model_override:
+        active_model = ctx.active_model_override
+        ctx.active_model_override = None
+    if ctx.active_effort_override:
+        active_effort = normalize_reasoning_effort(ctx.active_effort_override, default=active_effort)
+        ctx.active_effort_override = None
+
+    _drain_incoming_messages(messages, incoming_messages, drive_root, task_id, event_queue, _owner_msg_seen)
+
+    pending_compaction = getattr(tools._ctx, '_pending_compaction', None)
+    if pending_compaction is not None:
+        messages[:] = compact_tool_history_llm(messages, keep_recent=pending_compaction)
+        tools._ctx._pending_compaction = None
+    elif round_idx > 8:
+        messages[:] = compact_tool_history(messages, keep_recent=6)
+    elif round_idx > 3:
+        if len(messages) > 60:
+            messages[:] = compact_tool_history(messages, keep_recent=6)
+
+    msg, cost = _call_llm_with_retry(
+        llm, messages, active_model, tool_schemas, active_effort,
+        max_retries, drive_logs, task_id, round_idx, event_queue, accumulated_usage, task_type
+    )
+
+    if msg is None:
+        fallback_list_raw = os.environ.get(
+            "OUROBOROS_MODEL_FALLBACK_LIST",
+            "google/gemini-2.5-pro-preview,openai/o3,anthropic/claude-sonnet-4.6"
+        )
+        fallback_candidates = [m.strip() for m in fallback_list_raw.split(",") if m.strip()]
+        fallback_model = None
+        for candidate in fallback_candidates:
+            if candidate != active_model:
+                fallback_model = candidate
+                break
+        if fallback_model is None:
+            return (
+                f"⚠️ Failed to get a response from model {active_model} after {max_retries} attempts. "
+                f"All fallback models match the active one. Try rephrasing your request."
+            ), active_model, active_effort
+
+        fallback_progress = f"⚡ Fallback: {active_model} → {fallback_model} after empty response"
+        emit_progress(fallback_progress)
+
+        msg, fallback_cost = _call_llm_with_retry(
+            llm, messages, fallback_model, tool_schemas, active_effort,
+            max_retries, drive_logs, task_id, round_idx, event_queue, accumulated_usage, task_type
+        )
+
+        if msg is None:
+            return (
+                f"⚠️ Failed to get a response from the model after {max_retries} attempts. "
+                f"Fallback model ({fallback_model}) also returned no response."
+            ), active_model, active_effort
+
+    tool_calls = msg.get("tool_calls") or []
+    content = msg.get("content")
+    if not tool_calls:
+        final_text, _usage, _trace = _handle_text_response(content, llm_trace, accumulated_usage)
+        return final_text, active_model, active_effort
+
+    messages.append({"role": "assistant", "content": content or "", "tool_calls": tool_calls})
+
+    if content and content.strip():
+        emit_progress(content.strip())
+        llm_trace["assistant_notes"].append(content.strip()[:320])
+
+    error_count = _handle_tool_calls(
+        tool_calls, tools, drive_logs, task_id, stateful_executor,
+        messages, llm_trace, emit_progress
+    )
+
+    budget_result = _check_budget_limits(
+        budget_remaining_usd, accumulated_usage, round_idx, messages,
+        llm, active_model, active_effort, max_retries, drive_logs,
+        task_id, event_queue, llm_trace, task_type
+    )
+    if budget_result is not None:
+        final_text, _usage, _trace = budget_result
+        return final_text, active_model, active_effort
+
+    return None, active_model, active_effort
+
+
 def run_llm_loop(
     messages: List[Dict[str, Any]],
     tools: ToolRegistry,
@@ -645,123 +770,15 @@ def run_llm_loop(
     try:
         while True:
             round_idx += 1
-
-            # Hard limit on rounds to prevent runaway tasks
-            if round_idx > MAX_ROUNDS:
-                finish_reason = f"⚠️ Task exceeded MAX_ROUNDS ({MAX_ROUNDS}). Consider decomposing into subtasks via schedule_task."
-                messages.append({"role": "system", "content": f"[ROUND_LIMIT] {finish_reason}"})
-                try:
-                    final_msg, final_cost = _call_llm_with_retry(
-                        llm, messages, active_model, None, active_effort,
-                        max_retries, drive_logs, task_id, round_idx, event_queue, accumulated_usage, task_type
-                    )
-                    if final_msg:
-                        return (final_msg.get("content") or finish_reason), accumulated_usage, llm_trace
-                    return finish_reason, accumulated_usage, llm_trace
-                except Exception:
-                    log.warning("Failed to get final response after round limit", exc_info=True)
-                    return finish_reason, accumulated_usage, llm_trace
-
-            # Soft self-check reminder every 50 rounds (LLM-first: agent decides, not code)
-            _maybe_inject_self_check(round_idx, MAX_ROUNDS, messages, accumulated_usage, emit_progress)
-
-            # Apply LLM-driven model/effort switch (via switch_model tool)
-            ctx = tools._ctx
-            if ctx.active_model_override:
-                active_model = ctx.active_model_override
-                ctx.active_model_override = None
-            if ctx.active_effort_override:
-                active_effort = normalize_reasoning_effort(ctx.active_effort_override, default=active_effort)
-                ctx.active_effort_override = None
-
-            # Inject owner messages (in-process queue + Drive mailbox)
-            _drain_incoming_messages(messages, incoming_messages, drive_root, task_id, event_queue, _owner_msg_seen)
-
-            # Compact old tool history when needed
-            # Check for LLM-requested compaction first (via compact_context tool)
-            pending_compaction = getattr(tools._ctx, '_pending_compaction', None)
-            if pending_compaction is not None:
-                messages = compact_tool_history_llm(messages, keep_recent=pending_compaction)
-                tools._ctx._pending_compaction = None
-            elif round_idx > 8:
-                messages = compact_tool_history(messages, keep_recent=6)
-            elif round_idx > 3:
-                # Light compaction: only if messages list is very long (>60 items)
-                if len(messages) > 60:
-                    messages = compact_tool_history(messages, keep_recent=6)
-
-            # --- LLM call with retry ---
-            msg, cost = _call_llm_with_retry(
-                llm, messages, active_model, tool_schemas, active_effort,
-                max_retries, drive_logs, task_id, round_idx, event_queue, accumulated_usage, task_type
+            final_text, active_model, active_effort = _run_one_round(
+                round_idx, MAX_ROUNDS, messages, tools, llm, tool_schemas,
+                active_model, active_effort, max_retries, drive_logs, task_id,
+                event_queue, accumulated_usage, task_type, llm_trace, emit_progress,
+                incoming_messages, drive_root, budget_remaining_usd, _owner_msg_seen,
+                stateful_executor,
             )
-
-            # Fallback to another model if primary model returns empty responses
-            if msg is None:
-                # Configurable fallback priority list (Bible P3: no hardcoded behavior)
-                fallback_list_raw = os.environ.get(
-                    "OUROBOROS_MODEL_FALLBACK_LIST",
-                    "google/gemini-2.5-pro-preview,openai/o3,anthropic/claude-sonnet-4.6"
-                )
-                fallback_candidates = [m.strip() for m in fallback_list_raw.split(",") if m.strip()]
-                fallback_model = None
-                for candidate in fallback_candidates:
-                    if candidate != active_model:
-                        fallback_model = candidate
-                        break
-                if fallback_model is None:
-                    return (
-                        f"⚠️ Failed to get a response from model {active_model} after {max_retries} attempts. "
-                        f"All fallback models match the active one. Try rephrasing your request."
-                    ), accumulated_usage, llm_trace
-
-                # Emit progress message so user sees fallback happening
-                fallback_progress = f"⚡ Fallback: {active_model} → {fallback_model} after empty response"
-                emit_progress(fallback_progress)
-
-                # Try fallback model (don't increment round_idx — this is still same logical round)
-                msg, fallback_cost = _call_llm_with_retry(
-                    llm, messages, fallback_model, tool_schemas, active_effort,
-                    max_retries, drive_logs, task_id, round_idx, event_queue, accumulated_usage, task_type
-                )
-
-                # If fallback also fails, give up
-                if msg is None:
-                    return (
-                        f"⚠️ Failed to get a response from the model after {max_retries} attempts. "
-                        f"Fallback model ({fallback_model}) also returned no response."
-                    ), accumulated_usage, llm_trace
-
-                # Fallback succeeded — continue processing with this msg
-                # (don't return — fall through to tool_calls processing below)
-
-            tool_calls = msg.get("tool_calls") or []
-            content = msg.get("content")
-            # No tool calls — final response
-            if not tool_calls:
-                return _handle_text_response(content, llm_trace, accumulated_usage)
-
-            # Process tool calls
-            messages.append({"role": "assistant", "content": content or "", "tool_calls": tool_calls})
-
-            if content and content.strip():
-                emit_progress(content.strip())
-                llm_trace["assistant_notes"].append(content.strip()[:320])
-
-            error_count = _handle_tool_calls(
-                tool_calls, tools, drive_logs, task_id, stateful_executor,
-                messages, llm_trace, emit_progress
-            )
-
-            # --- Budget guard ---
-            # LLM decides when to stop (Bible P0, P3). We only enforce hard budget limit.
-            budget_result = _check_budget_limits(
-                budget_remaining_usd, accumulated_usage, round_idx, messages,
-                llm, active_model, active_effort, max_retries, drive_logs,
-                task_id, event_queue, llm_trace, task_type
-            )
-            if budget_result is not None:
-                return budget_result
+            if final_text is not None:
+                return final_text, accumulated_usage, llm_trace
 
     finally:
         # Cleanup thread-sticky executor for stateful tools

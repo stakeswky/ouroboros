@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.2 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,11 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.2.2 -- loop.py refactor: extract _run_one_round
+- **Refactor: loop.py** -- extracted 189-line `run_llm_loop` inner body into `_run_one_round`. `run_llm_loop` now 81 lines, `_run_one_round` 123 lines — both under 150-line limit (Bible P5).
+- **Fix: pyproject.toml version sync** -- bumped to 6.2.2 (was 6.2.0, desync with VERSION).
+- 117 tests passing.
 
 ### v6.2.1 -- Bugfixes: SHA mismatch, codex_exec, status display
 - **Fix: SHA mismatch warnings** -- workers now read actual git HEAD at spawn time instead of stale state.json SHA. Eliminates persistent SHA mismatch warnings.
