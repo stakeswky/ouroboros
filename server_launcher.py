@@ -89,8 +89,8 @@ if not CHAT_LOG_PATH.exists():
 # ----------------------------
 # 3) Git constants
 # ----------------------------
-BRANCH_DEV = "ouroboros"
-BRANCH_STABLE = "ouroboros-stable"
+BRANCH_DEV = "main"
+BRANCH_STABLE = "main"
 REMOTE_URL = f"https://{GITHUB_TOKEN}:x-oauth-basic@github.com/{GITHUB_USER}/{GITHUB_REPO}.git" if GITHUB_TOKEN else ""
 
 # ----------------------------
@@ -399,7 +399,7 @@ while True:
         if chat_id != st.get("owner_chat_id"):
             continue
 
-        log_chat(chat_id, "user", text)
+        log_chat("in", chat_id, user_id, text)
 
         # Supervisor commands
         cmd_result = _handle_supervisor_command(text, chat_id, offset)
