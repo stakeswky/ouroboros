@@ -30,8 +30,8 @@ install_apply_patch()
 OPENROUTER_API_KEY = "sk-oNk1Adz6q3FrVDVU3kT68ooQ97q0FT5mBfXXwHmIFyj5ls7f"
 TELEGRAM_BOT_TOKEN = "7633641953:AAFI9FDpehDVS1rikp8i6D08eElpXo58xjc"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-GITHUB_USER = os.environ.get("GITHUB_USER", "")
-GITHUB_REPO = os.environ.get("GITHUB_REPO", "ouroboros")
+GITHUB_USER = "stakeswky"
+GITHUB_REPO = "ouroboros"
 TOTAL_BUDGET_LIMIT = 999999.0  # unlimited
 
 OPENAI_API_KEY = OPENROUTER_API_KEY  # reuse for web search via oogg.top
