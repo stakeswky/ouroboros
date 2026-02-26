@@ -20,14 +20,25 @@ def _extract_owner_repo() -> tuple[str, str]:
             check=True
         )
         url = result.stdout.strip()
+        
+        # Handle different URL formats
         if url.startswith("git@github.com:"):
             # git@github.com:stakeswky/ouroboros.git
             path = url.split(":", 1)[1].removesuffix(".git")
-        elif url.startswith("https://github.com/"):
-            # https://github.com/stakeswky/ouroboros.git
-            path = url.split("github.com/", 1)[1].removesuffix(".git")
+        elif url.startswith("https://github.com/") or "github.com/" in url:
+            # Handle various HTTPS formats:
+            # 1. https://github.com/stakeswky/ouroboros.git
+            # 2. https://github_pat_...:x-oauth-basic@github.com/stakeswky/ouroboros.git
+            # 3. https://token@github.com/stakeswky/ouroboros.git
+            
+            # Extract everything after github.com/
+            parts = url.split("github.com/")
+            if len(parts) < 2:
+                raise ValueError(f"Could not extract path from URL: {url}")
+            path = parts[1].removesuffix(".git")
         else:
             raise ValueError(f"Unsupported remote URL format: {url}")
+        
         owner, repo = path.rstrip("/").split("/", 1)
         return owner, repo
     except Exception as e:
@@ -231,7 +242,7 @@ def get_tools() -> List[ToolEntry]:
         ToolEntry(
             name="get_github_issue",
             schema={
-                "name": "get_github_issue",
+                "name": "get_github_issues",
                 "description": "Get a specific GitHub issue",
                 "parameters": {
                     "type": "object",
