@@ -42,6 +42,9 @@ MODEL_CODE = "deepseek-ai/DeepSeek-V3.2"
 MODEL_LIGHT = "deepseek-ai/DeepSeek-V3.2"
 
 MAX_WORKERS = 3  # conservative for 1.9G RAM
+# SiliconFlow L1 rate limits
+LLM_RPM = 1000    # requests per minute
+LLM_TPM = 100000  # tokens per minute
 BUDGET_REPORT_EVERY_MESSAGES = 10
 SOFT_TIMEOUT_SEC = 600
 HARD_TIMEOUT_SEC = 1800
