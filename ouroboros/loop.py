@@ -33,6 +33,13 @@ READ_ONLY_PARALLEL_TOOLS = frozenset({
 # Stateful browser tools require thread-affinity (Playwright sync uses greenlet)
 STATEFUL_BROWSER_TOOLS = frozenset({"browse_page", "browser_action"})
 
+# Tools safe to cache within a single task (read-only, deterministic)
+CACHEABLE_TOOLS = READ_ONLY_PARALLEL_TOOLS | frozenset({
+    "knowledge_read", "knowledge_list", "git_status", "git_diff",
+    "list_github_issues", "get_github_issue",
+    "analyze_screenshot",
+})
+
 
 def _truncate_tool_result(result: Any) -> str:
     """
@@ -249,6 +256,7 @@ def _handle_tool_calls(
     messages: List[Dict[str, Any]],
     llm_trace: Dict[str, Any],
     emit_progress: Callable[[str], None],
+    tool_cache: Optional[Dict[str, str]] = None,
 ) -> int:
     """
     Execute tool calls and append results to messages.
@@ -256,6 +264,35 @@ def _handle_tool_calls(
     Returns: Number of errors encountered
     """
     # Parallelize only for a strict read-only whitelist; all calls wrapped with timeout.
+    # Check cache for cacheable tools (dedup within a single task)
+    if tool_cache is not None:
+        cached_results = []
+        uncached_calls = []
+        for tc in tool_calls:
+            fn = tc.get("function", {}).get("name", "")
+            if fn in CACHEABLE_TOOLS:
+                cache_key = f"{fn}:{json.dumps(json.loads(tc['function'].get('arguments') or '{}'), sort_keys=True)}"
+                if cache_key in tool_cache:
+                    cached_results.append((tc, tool_cache[cache_key]))
+                    continue
+            uncached_calls.append(tc)
+            cached_results.append((tc, None))  # placeholder
+
+        if cached_results and not uncached_calls:
+            # All results cached
+            results = []
+            for tc, cached in cached_results:
+                fn = tc["function"]["name"]
+                results.append({
+                    "tool_call_id": tc["id"],
+                    "fn_name": fn,
+                    "result": cached,
+                    "is_error": False,
+                    "args_for_log": {"_cached": True},
+                    "is_code_tool": fn in tools.CODE_TOOLS,
+                })
+            return _process_tool_results(results, messages, llm_trace, emit_progress)
+
     can_parallel = (
         len(tool_calls) > 1 and
         all(
@@ -289,6 +326,17 @@ def _handle_tool_calls(
                 results[idx] = future.result()
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
+
+    # Populate cache for cacheable tools
+    if tool_cache is not None:
+        for r in results:
+            if not r["is_error"] and r["fn_name"] in CACHEABLE_TOOLS:
+                try:
+                    tc_match = next(tc for tc in tool_calls if tc["id"] == r["tool_call_id"])
+                    cache_key = f"{r['fn_name']}:{json.dumps(json.loads(tc_match['function'].get('arguments') or '{}'), sort_keys=True)}"
+                    tool_cache[cache_key] = r["result"]
+                except (StopIteration, json.JSONDecodeError):
+                    pass
 
     # Process results in original order
     return _process_tool_results(results, messages, llm_trace, emit_progress)
@@ -524,6 +572,7 @@ def _run_one_round(
     budget_remaining_usd: Optional[float],
     _owner_msg_seen: set,
     stateful_executor: "_StatefulToolExecutor",
+    tool_cache: Optional[Dict[str, str]] = None,
 ) -> Tuple[Optional[str], str, str]:
     if round_idx > MAX_ROUNDS:
         finish_reason = f"⚠️ Task exceeded MAX_ROUNDS ({MAX_ROUNDS}). Consider decomposing into subtasks via schedule_task."
@@ -612,7 +661,7 @@ def _run_one_round(
 
     error_count = _handle_tool_calls(
         tool_calls, tools, drive_logs, task_id, stateful_executor,
-        messages, llm_trace, emit_progress
+        messages, llm_trace, emit_progress, tool_cache=tool_cache
     )
 
     budget_result = _check_budget_limits(
@@ -675,6 +724,8 @@ def run_llm_loop(
     stateful_executor = _StatefulToolExecutor()
     # Dedup set for per-task owner messages from Drive mailbox
     _owner_msg_seen: set = set()
+    # Cache for read-only tool calls to avoid duplicate execution
+    tool_cache: Dict[str, str] = {}
     try:
         MAX_ROUNDS = max(1, int(os.environ.get("OUROBOROS_MAX_ROUNDS", "200")))
     except (ValueError, TypeError):
@@ -689,7 +740,7 @@ def run_llm_loop(
                 active_model, active_effort, max_retries, drive_logs, task_id,
                 event_queue, accumulated_usage, task_type, llm_trace, emit_progress,
                 incoming_messages, drive_root, budget_remaining_usd, _owner_msg_seen,
-                stateful_executor,
+                stateful_executor, tool_cache=tool_cache,
             )
             if final_text is not None:
                 return final_text, accumulated_usage, llm_trace

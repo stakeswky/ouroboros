@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.5.0 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.5.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,12 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.5.1 -- Tool call dedup cache + version sync fix
+
+- Read-only tool calls with identical args are cached within a task, avoiding redundant execution
+- Fixed pyproject.toml version desync (was 6.4.1, now synced)
+- Cacheable tools: repo_read, repo_list, drive_read, drive_list, git_status, knowledge_read, chat_history
 
 ### v6.5.0 -- Smart context budget management
 - **New: token budget system** -- Context builder now manages a 30k token budget with priority-based allocation. Static sections (system prompt, BIBLE) always included; semi-stable (identity, scratchpad) truncated if needed; dynamic (recent chat, drive state) compressed or dropped.
