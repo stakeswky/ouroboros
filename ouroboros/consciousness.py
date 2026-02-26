@@ -496,7 +496,7 @@ You are the persistent thinking process that runs between tasks. Your purpose is
             "parameters": {"type": "object", "properties": {
                 "seconds": {"type": "integer", "minimum": 60, "maximum": 3600}
             }, "required": ["seconds"]}
-        }, _set_next_wakeup, requires_context=True))
+        }, _set_next_wakeup))
 
         return registry
 
