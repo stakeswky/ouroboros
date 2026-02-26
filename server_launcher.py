@@ -410,13 +410,7 @@ while True:
         # Direct chat
         prefix = cmd_result if isinstance(cmd_result, str) else ""
         try:
-            handle_chat_direct(
-                text=prefix + text,
-                chat_id=chat_id,
-                tg=TG,
-                drive_root=DRIVE_ROOT,
-                repo_dir=REPO_DIR,
-            )
+            handle_chat_direct(chat_id=chat_id, text=prefix + text)
         except Exception as e:
             log.error("chat_direct error: %s", e, exc_info=True)
             send_with_budget(chat_id, f"⚠️ Error: {e}")
