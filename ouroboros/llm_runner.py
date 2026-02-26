@@ -37,6 +37,7 @@ _MODEL_PRICING_STATIC = {
     "google/gemini-3-pro-preview": (2.0, 0.20, 12.0),
     "x-ai/grok-3-mini": (0.30, 0.03, 0.50),
     "qwen/qwen3.5-plus-02-15": (0.40, 0.04, 2.40),
+    "deepseek-ai/DeepSeek-V3.2": (0.274, 0.027, 0.411),
 }
 
 _pricing_fetched = False
