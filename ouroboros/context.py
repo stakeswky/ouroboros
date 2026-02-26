@@ -97,6 +97,49 @@ def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
     return "## Runtime context\n\n" + runtime_ctx
 
 
+
+def _build_reflexion_summary(reflexion_path: pathlib.Path, max_entries: int = 10) -> str:
+    """Build a summary of recent evolution outcomes for Reflexion-style learning.
+
+    Returns a formatted section showing recent successes and failures,
+    so the next evolution cycle can learn from past outcomes.
+    """
+    try:
+        import json
+        lines = reflexion_path.read_text(encoding="utf-8").strip().splitlines()
+        if not lines:
+            return ""
+        # Take last N entries
+        recent = []
+        for line in lines[-max_entries:]:
+            try:
+                recent.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        if not recent:
+            return ""
+
+        parts = ["## Evolution Reflexion (recent outcomes)\n"]
+        for r in recent:
+            status = "✅ SUCCESS" if r.get("success") else "❌ FAILURE"
+            parts.append(
+                f"- Cycle {r.get('cycle', '?')}: {status} "
+                f"(cost=${r.get('cost_usd', 0):.3f}, rounds={r.get('rounds', 0)}, "
+                f"task={r.get('task_id', '?')[:8]})"
+            )
+
+        failures = [r for r in recent if not r.get("success")]
+        successes = [r for r in recent if r.get("success")]
+        if failures:
+            parts.append(f"\nRecent failure rate: {len(failures)}/{len(recent)}. "
+                        "Avoid repeating the same approach that led to failures.")
+        if successes:
+            parts.append(f"Recent success rate: {len(successes)}/{len(recent)}. "
+                        "Build on approaches that worked.")
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
 def _build_memory_sections(memory: Memory) -> List[str]:
     """Build scratchpad, identity, dialogue summary sections."""
     sections = []
@@ -231,6 +274,15 @@ def build_llm_messages(
                 semi_stable_parts.append(
                     "## Evolution History\n\n" + clip_text(evo_hist, 8000)
                 )
+
+        # Reflexion: inject recent evolution outcomes (success/failure)
+        # Inspired by Reflexion (Shinn et al.) — conditioning on past
+        # outcomes prevents repeating failures and reinforces successes
+        reflexion_path = env.drive_path("logs/evolution_reflexion.jsonl")
+        if reflexion_path.exists():
+            reflexion_text = _build_reflexion_summary(reflexion_path)
+            if reflexion_text:
+                semi_stable_parts.append(reflexion_text)
 
     semi_stable_text = "\n\n".join(semi_stable_parts)
 

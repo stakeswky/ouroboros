@@ -1,6 +1,6 @@
 [project]
 name = "ouroboros"
-version = "6.3.2"
+version = "6.4.0"
 description = "A self-modifying AI agent"
 readme = "README.md"
 license = {text = "MIT"}

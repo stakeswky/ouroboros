@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.3.2 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.4.0 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,14 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.4.0 -- Reflexion: evolution learns from its own outcomes
+- **New: Reflexion pattern** -- Evolution cycles now record structured outcomes (success/failure, cost, rounds, error details) to `evolution_reflexion.jsonl`. Inspired by Reflexion paper (Shinn et al.) via Yohei Nakajima's NeurIPS 2025 survey.
+- **Enhancement: context.py** -- Auto-injects recent evolution outcomes into evolution task context, showing success/failure rates and patterns.
+- **Enhancement: events.py** -- `_record_evolution_reflexion()` captures structured cycle data for cross-cycle learning.
+- **Technical axis**: Evolution process now has outcome-aware memory — each cycle sees what worked and what failed before.
+- **Cognitive axis**: Applied external research (Reflexion pattern) to own architecture. First cycle driven by web research findings.
+- **Existential axis**: Moving from blind iteration to reflective iteration — learning from failure, not just counting it.
 
 ### v6.3.2 -- Evolution memory: DGM-inspired history tracking
 - **New: evolution history** -- Evolution tasks now automatically receive history of previous cycles (what worked, what failed, candidate directions). Inspired by Darwin Gödel Machine's "history of what has been tried" innovation.

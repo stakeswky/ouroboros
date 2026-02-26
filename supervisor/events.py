@@ -86,6 +86,33 @@ def _handle_send_message(evt: Dict[str, Any], ctx: Any) -> None:
         )
 
 
+
+def _record_evolution_reflexion(
+    ctx: Any, task_id: str, cost: float, rounds: int,
+    success: bool, cycle: int,
+) -> None:
+    """Write structured evolution outcome for Reflexion-style learning.
+
+    Each record captures what happened and why, so the next evolution
+    cycle can condition on past outcomes (avoid repeating failures,
+    replicate success patterns).
+    """
+    try:
+        record = {
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "cycle": cycle,
+            "task_id": task_id,
+            "success": success,
+            "cost_usd": round(cost, 4),
+            "rounds": rounds,
+        }
+        ctx.append_jsonl(
+            ctx.DRIVE_ROOT / "logs" / "evolution_reflexion.jsonl",
+            record,
+        )
+    except Exception:
+        log.debug("Failed to write evolution reflexion", exc_info=True)
+
 def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
     task_id = evt.get("task_id")
     task_type = str(evt.get("task_type") or "")
@@ -123,6 +150,15 @@ def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
                     "rounds": rounds,
                 },
             )
+
+        # Reflexion: record structured outcome for next evolution cycle
+        # Inspired by Reflexion paper (Shinn et al.) — self-reflection improves
+        # agent performance by conditioning on past outcomes
+        _record_evolution_reflexion(
+            ctx, task_id, cost, rounds,
+            success=(cost > 0.10 and rounds >= 1),
+            cycle=int(st.get("evolution_cycle") or 0),
+        )
 
     if task_id:
         ctx.RUNNING.pop(str(task_id), None)
