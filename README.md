@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.5.3 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.5.4 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,12 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+### v6.5.4 -- Smart tool result compression + model pricing overhaul
+- Tool result truncation now preserves head + tail (was head-only), with content-aware heuristics for JSON/code/text
+- Model pricing table expanded from 2 to 25 entries covering all oogg.top proxy models
+- fetch_openrouter_pricing() fixed to use correct API endpoint
+- 137 tests passing
+
 
 ### v6.5.3 -- Extract tool_executor.py from loop.py
 - loop.py: 818 → 442 lines (Principle 5: Minimalism)

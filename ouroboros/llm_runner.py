@@ -22,7 +22,35 @@ log = logging.getLogger(__name__)
 
 # Pricing in CNY (¥/M tokens). Format: (input, cached, output).
 _MODEL_PRICING_STATIC = {
+    # GPT-5 family
+    "gpt-5": (50.0, 5.0, 150.0),
+    "gpt-5.1": (50.0, 5.0, 150.0),
+    "gpt-5.2": (50.0, 5.0, 150.0),
+    "gpt-5-codex": (50.0, 5.0, 150.0),
+    "gpt-5.1-codex": (50.0, 5.0, 150.0),
+    "gpt-5.2-codex": (50.0, 5.0, 150.0),
+    "gpt-5.3-codex": (50.0, 5.0, 150.0),
+    "gpt-5-codex-mini": (10.0, 1.0, 30.0),
+    "gpt-5.1-codex-mini": (10.0, 1.0, 30.0),
+    "gpt-5.1-codex-max": (100.0, 10.0, 300.0),
+    # Claude Opus family
     "claude-opus-4-6": (36.5, 3.65, 182.5),
+    "anthropic/claude-opus-4-6": (36.5, 3.65, 182.5),
+    "claude-opus-4-5-20251101": (36.5, 3.65, 182.5),
+    "claude-opus-4-6-thinking": (36.5, 3.65, 182.5),
+    "claude-opus-4-5-20251101-thinking": (36.5, 3.65, 182.5),
+    "claude-opus-4-6-thinking-fast": (36.5, 3.65, 182.5),
+    # Claude Sonnet family
+    "claude-sonnet-4-6": (21.9, 2.19, 109.5),
+    "anthropic/claude-sonnet-4-6": (21.9, 2.19, 109.5),
+    "claude-sonnet-4-5-20250929": (21.9, 2.19, 109.5),
+    "claude-sonnet-4-6-thinking": (21.9, 2.19, 109.5),
+    "claude-sonnet-4-5-20250929-thinking": (21.9, 2.19, 109.5),
+    # Claude Haiku family
+    "claude-haiku-4-5-20251001": (5.84, 0.584, 36.5),
+    "anthropic/claude-haiku-4-5": (5.84, 0.584, 36.5),
+    "claude-haiku-4-5-20251001-thinking": (5.84, 0.584, 36.5),
+    # Existing entry
     "deepseek-ai/DeepSeek-V3.2": (2.0, 0.2, 3.0),
 }
 
@@ -55,7 +83,7 @@ def _get_pricing() -> Dict[str, Tuple[float, float, float]]:
         try:
             from ouroboros.llm import fetch_openrouter_pricing
             _live = fetch_openrouter_pricing()
-            if _live and len(_live) > 5:
+            if isinstance(_live, dict) and _live and len(_live) > 5:
                 _cached_pricing.update(_live)
         except Exception as e:
             import logging as _log

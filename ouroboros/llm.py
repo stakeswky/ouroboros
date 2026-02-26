@@ -38,67 +38,61 @@ def add_usage(total: Dict[str, Any], usage: Dict[str, Any]) -> None:
 
 def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
     """
-    Fetch current pricing from OpenRouter API.
+    Discover available models from the oogg.top proxy and validate static pricing coverage.
 
-    Returns dict of {model_id: (input_per_1m, cached_per_1m, output_per_1m)}.
-    Returns empty dict on failure.
+    oogg.top does not expose pricing data, so this function no longer returns live pricing.
+    It returns the discovered model ID list (for discovery/validation), while callers should
+    continue using the static pricing table for actual cost estimation.
     """
-    import logging
-    log = logging.getLogger("ouroboros.llm")
-
     try:
         import requests
     except ImportError:
-        log.warning("requests not installed, cannot fetch pricing")
+        log.warning("requests not installed, cannot fetch model list")
         return {}
 
     try:
-        url = "https://api.siliconflow.cn/v1/models"
-        resp = requests.get(url, timeout=15)
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not api_key:
+            log.warning("OPENROUTER_API_KEY not set, cannot fetch model list from oogg.top")
+            return {}
+
+        url = "https://oogg.top/v1/models"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://colab.research.google.com/",
+            "X-Title": "Ouroboros",
+        }
+        resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
 
         data = resp.json()
         models = data.get("data", [])
+        model_ids = sorted(
+            str(m.get("id", "")).strip()
+            for m in models
+            if isinstance(m, dict) and str(m.get("id", "")).strip()
+        )
 
-        # Prefixes we care about
-        prefixes = ("anthropic/", "openai/", "google/", "meta-llama/", "x-ai/", "qwen/")
-
-        pricing_dict = {}
-        for model in models:
-            model_id = model.get("id", "")
-            if not model_id.startswith(prefixes):
-                continue
-
-            pricing = model.get("pricing", {})
-            if not pricing or not pricing.get("prompt"):
-                continue
-
-            # OpenRouter pricing is in dollars per token (raw values)
-            raw_prompt = float(pricing.get("prompt", 0))
-            raw_completion = float(pricing.get("completion", 0))
-            raw_cached_str = pricing.get("input_cache_read")
-            raw_cached = float(raw_cached_str) if raw_cached_str else None
-
-            # Convert to per-million tokens
-            prompt_price = round(raw_prompt * 1_000_000, 4)
-            completion_price = round(raw_completion * 1_000_000, 4)
-            if raw_cached is not None:
-                cached_price = round(raw_cached * 1_000_000, 4)
+        try:
+            from ouroboros.llm_runner import _MODEL_PRICING_STATIC
+            missing = [mid for mid in model_ids if mid not in _MODEL_PRICING_STATIC]
+            if missing:
+                log.warning(
+                    "oogg.top reports %d models missing from static pricing table: %s",
+                    len(missing),
+                    ", ".join(missing[:20]) + (" ..." if len(missing) > 20 else ""),
+                )
             else:
-                cached_price = round(prompt_price * 0.1, 4)  # fallback: 10% of prompt
+                log.info("Static pricing table covers all %d discovered oogg.top models", len(model_ids))
+        except Exception as cover_err:
+            log.debug("Could not validate static pricing coverage: %s", cover_err)
 
-            # Sanity check: skip obviously wrong prices
-            if prompt_price > 1000 or completion_price > 1000:
-                log.warning(f"Skipping {model_id}: prices seem wrong (prompt={prompt_price}, completion={completion_price})")
-                continue
-
-            pricing_dict[model_id] = (prompt_price, cached_price, completion_price)
-
-        log.info(f"Fetched pricing for {len(pricing_dict)} models from OpenRouter")
-        return pricing_dict
+        log.info("Discovered %d models from oogg.top/v1/models", len(model_ids))
+        return model_ids  # type: ignore[return-value]
 
     except (requests.RequestException, ValueError, KeyError) as e:
-        log.warning(f"Failed to fetch OpenRouter pricing: {e}")
+        log.warning(f"Failed to fetch model list from oogg.top: {e}")
         return {}
 
 
@@ -211,4 +205,3 @@ class LLMClient:
         if light and light != main and light != code:
             models.append(light)
         return models
-

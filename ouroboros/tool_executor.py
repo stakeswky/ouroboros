@@ -39,14 +39,40 @@ CACHEABLE_TOOLS = READ_ONLY_PARALLEL_TOOLS | frozenset({
 
 def _truncate_tool_result(result: Any) -> str:
     """
-    Hard-cap tool result string to 15000 characters.
-    If truncated, append a note with the original length.
+    Compress tool results to fit within 15000 characters.
+
+    Uses simple heuristics:
+    - JSON-like payloads keep more of the front
+    - Code-like payloads keep both the front and tail
+    - Other text uses a balanced front/tail split
+    If shortened, insert an omission note in the middle.
     """
-    result_str = str(result)
-    if len(result_str) <= 15000:
-        return result_str
+    result_str = result if isinstance(result, str) else str(result)
     original_len = len(result_str)
-    return result_str[:15000] + f"\n... (truncated from {original_len} chars)"
+    limit = 15000
+    if original_len <= limit:
+        return result_str
+
+    stripped = result_str.lstrip()
+    is_json_like = stripped.startswith("{") or stripped.startswith("[")
+    code_markers = ("def ", "class ", "import ", "function ", "const ", "{", "=>")
+    is_code_like = any(marker in result_str for marker in code_markers)
+
+    if is_json_like:
+        head_len, tail_len = 10000, 3000
+    elif is_code_like:
+        head_len, tail_len = 7000, 3000
+    else:
+        head_len, tail_len = 8000, 4000
+
+    omitted_chars = max(0, original_len - head_len - tail_len)
+    note = f"\n... [{omitted_chars} chars omitted] ...\n"
+    compressed = result_str[:head_len] + note + result_str[-tail_len:]
+
+    # Safety cap: should not trigger with the chosen budgets, but keep a hard limit.
+    if len(compressed) > limit:
+        return compressed[:limit]
+    return compressed
 
 
 def _execute_single_tool(
