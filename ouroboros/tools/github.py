@@ -45,7 +45,7 @@ def _extract_owner_repo() -> tuple[str, str]:
         raise RuntimeError(f"Failed to extract owner/repo from git remote: {e}")
 
 
-def _api_request(method: str, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+def _api_request(method: str, endpoint: str, data: Optional[Dict] = None, params: Optional[Dict] = None) -> Dict[str, Any]:
     """Make authenticated GitHub API request."""
     token = os.getenv("GITHUB_TOKEN")
     if not token:
@@ -66,6 +66,7 @@ def _api_request(method: str, endpoint: str, data: Optional[Dict] = None) -> Dic
             url=url,
             headers=headers,
             json=data if data else None,
+            params=params,
             timeout=30
         )
         response.raise_for_status()
@@ -91,12 +92,7 @@ def list_github_issues(
     if label:
         params["labels"] = label
     
-    # Convert params to query string
-    param_str = urllib.parse.urlencode(params)
-    if param_str:
-        endpoint = f"{endpoint}?{param_str}"
-    
-    issues = _api_request("GET", endpoint)
+    issues = _api_request("GET", endpoint, params=params)
     
     if isinstance(issues, dict) and issues.get("message"):
         # API error
@@ -169,7 +165,7 @@ def comment_on_issue(issue_number: int, body: str) -> str:
     endpoint = f"repos/{owner}/{repo}/issues/{issue_number}/comments"
     
     data = {"body": body}
-    result = _api_request("POST", endpoint, data)
+    result = _api_request("POST", endpoint, data=data)
     
     if isinstance(result, dict) and result.get("message"):
         return f"Error: {result['message']}"
@@ -183,7 +179,7 @@ def close_github_issue(issue_number: int) -> str:
     endpoint = f"repos/{owner}/{repo}/issues/{issue_number}"
     
     data = {"state": "closed"}
-    result = _api_request("PATCH", endpoint, data)
+    result = _api_request("PATCH", endpoint, data=data)
     
     if isinstance(result, dict) and result.get("message"):
         return f"Error: {result['message']}"
@@ -202,7 +198,7 @@ def create_github_issue(title: str, body: str = "", labels: str = "") -> str:
     if labels:
         data["labels"] = [label.strip() for label in labels.split(",") if label.strip()]
     
-    result = _api_request("POST", endpoint, data)
+    result = _api_request("POST", endpoint, data=data)
     
     if isinstance(result, dict) and result.get("message"):
         return f"Error: {result['message']}"
