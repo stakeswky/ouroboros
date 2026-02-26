@@ -624,7 +624,7 @@ def status_text(workers_dict: Dict[int, Any], pending_list: list, running_dict: 
             drift_icon = " ⚠️" if st.get("budget_drift_alert") else ""
             lines.append(
                 f"budget_drift: {drift_pct:.1f}%{drift_icon} "
-                f"(tracked: ${our_delta:.2f} vs OpenRouter: ${or_delta:.2f})"
+                f"(tracked: ¥{our_delta:.2f} vs API: ¥{or_delta:.2f})"
             )
 
     # Model breakdown
@@ -638,7 +638,7 @@ def status_text(workers_dict: Dict[int, Any], pending_list: list, running_dict: 
                 calls = int(stats["calls"])
                 pt = int(stats["prompt_tokens"])
                 ct = int(stats["completion_tokens"])
-                lines.append(f"  {model_name}: ${cost:.2f} ({calls} calls, {pt:,}p/{ct:,}c tok)")
+                lines.append(f"  {model_name}: ¥{cost:.2f} ({calls} calls, {pt:,}p/{ct:,}c tok)")
 
     lines.append(
         "evolution: "
