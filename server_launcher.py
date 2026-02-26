@@ -32,7 +32,7 @@ TELEGRAM_BOT_TOKEN = "7633641953:AAFI9FDpehDVS1rikp8i6D08eElpXo58xjc"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_USER = "stakeswky"
 GITHUB_REPO = "ouroboros"
-TOTAL_BUDGET_LIMIT = 999999.0  # unlimited
+TOTAL_BUDGET_LIMIT = 400.0  # ¥400 CNY
 
 OPENAI_API_KEY = OPENROUTER_API_KEY  # reuse for web search via oogg.top
 ANTHROPIC_API_KEY = ""

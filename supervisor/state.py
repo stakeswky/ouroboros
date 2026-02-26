@@ -592,12 +592,12 @@ def status_text(workers_dict: Dict[int, Any], pending_list: list, running_dict: 
     spent = float(st.get("spent_usd") or 0.0)
     pct = budget_pct(st)
     budget_remaining_usd = max(0, TOTAL_BUDGET_LIMIT - spent)
-    lines.append(f"budget_total: ${TOTAL_BUDGET_LIMIT:.0f}")
-    lines.append(f"budget_remaining: ${budget_remaining_usd:.0f}")
+    lines.append(f"budget_total: ¥{TOTAL_BUDGET_LIMIT:.0f}")
+    lines.append(f"budget_remaining: ¥{budget_remaining_usd:.0f}")
     if pct > 0:
-        lines.append(f"spent_usd: ${spent:.2f} ({pct:.1f}% of budget)")
+        lines.append(f"spent: ¥{spent:.2f} ({pct:.1f}% of budget)")
     else:
-        lines.append(f"spent_usd: ${spent:.2f}")
+        lines.append(f"spent: ¥{spent:.2f}")
     lines.append(f"spent_calls: {st.get('spent_calls')}")
     lines.append(f"prompt_tokens: {st.get('spent_tokens_prompt')}, completion_tokens: {st.get('spent_tokens_completion')}, cached_tokens: {st.get('spent_tokens_cached')}")
 
@@ -606,7 +606,7 @@ def status_text(workers_dict: Dict[int, Any], pending_list: list, running_dict: 
     if breakdown:
         # Sort by cost descending
         sorted_categories = sorted(breakdown.items(), key=lambda x: x[1], reverse=True)
-        breakdown_parts = [f"{cat}=${cost:.2f}" for cat, cost in sorted_categories if cost > 0]
+        breakdown_parts = [f"{cat}=¥{cost:.2f}" for cat, cost in sorted_categories if cost > 0]
         if breakdown_parts:
             lines.append(f"budget_breakdown: {', '.join(breakdown_parts)}")
 
