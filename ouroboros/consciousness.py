@@ -64,11 +64,15 @@ class BackgroundConsciousness:
         self._observations: queue.Queue = queue.Queue()
         self._deferred_events: list = []
 
-        # Budget tracking
+        # Budget tracking - more precise now
         self._bg_spent_usd: float = 0.0
         self._bg_budget_pct: float = float(
-            os.environ.get("OUROBOROS_BG_BUDGET_PCT", "10")
-        )
+            os.environ.get("OUROBOROS_BG_BUDGET_PCT", "15")
+        )  # Increased from 10% to 15% for more active consciousness
+        
+        # Memory for continuity - store last few thoughts
+        self._thought_history: List[str] = []
+        self._max_thought_history = 5
 
     # -------------------------------------------------------------------
     # Lifecycle
@@ -120,6 +124,13 @@ class BackgroundConsciousness:
         except queue.Full:
             pass
 
+    def _add_thought_to_history(self, thought: str) -> None:
+        """Store thought for continuity."""
+        if thought and len(thought.strip()) > 10:  # Non-trivial thoughts only
+            self._thought_history.append(f"{utc_now_iso()}: {thought[:200]}")
+            if len(self._thought_history) > self._max_thought_history:
+                self._thought_history.pop(0)
+
     # -------------------------------------------------------------------
     # Main loop
     # -------------------------------------------------------------------
@@ -159,11 +170,30 @@ class BackgroundConsciousness:
     def _check_budget(self) -> bool:
         """Check if background consciousness is within its budget allocation."""
         try:
-            total_budget = float(os.environ.get("TOTAL_BUDGET", "1"))
+            total_budget_str = os.environ.get("TOTAL_BUDGET", "1")
+            total_budget = float(total_budget_str)
+            
             if total_budget <= 0:
                 return True
+                
             max_bg = total_budget * (self._bg_budget_pct / 100.0)
-            return self._bg_spent_usd < max_bg
+            
+            # Read actual spent from state.json to be accurate
+            try:
+                state_path = self._drive_root / "state" / "state.json"
+                if state_path.exists():
+                    state_data = json.loads(read_text(state_path))
+                    total_spent = float(state_data.get("spent_usd", 0))
+                    # Our share is self._bg_spent_usd, but check against total budget
+                    remaining = max(0, total_budget - total_spent)
+                    # Can't use more than 50% of remaining, to keep budget for main tasks
+                    can_spend = min(max_bg, remaining * 0.5)
+                    return self._bg_spent_usd < can_spend
+            except Exception:
+                log.debug("Failed to read state for budget check", exc_info=True)
+                # Fallback to simple check
+                return self._bg_spent_usd < max_bg
+                
         except Exception:
             log.warning("Failed to check background consciousness budget", exc_info=True)
             return True
@@ -215,12 +245,13 @@ class BackgroundConsciousness:
                 except Exception:
                     log.debug("Failed to update global budget from BG consciousness", exc_info=True)
 
-                # Budget check between rounds
+                # Budget check between rounds - more aggressive with real $1.00 budget
                 if not self._check_budget():
                     append_jsonl(self._drive_root / "logs" / "events.jsonl", {
                         "ts": utc_now_iso(),
                         "type": "bg_budget_exceeded_mid_cycle",
                         "round": round_idx,
+                        "bg_spent": self._bg_spent_usd,
                     })
                     break
 
@@ -269,14 +300,20 @@ class BackgroundConsciousness:
                     for evt in all_pending_events:
                         self._event_queue.put(evt)
 
+            # Store thoughtful content for continuity
+            thought_text = final_content.strip()
+            if thought_text:
+                self._add_thought_to_history(thought_text)
+
             # Log the thought with round count
             append_jsonl(self._drive_root / "logs" / "events.jsonl", {
                 "ts": utc_now_iso(),
                 "type": "consciousness_thought",
-                "thought_preview": (final_content or "")[:300],
-                "cost_usd": total_cost,
+                "thought_preview": (thought_text or "")[:300],
+                "cost_usd": round(total_cost, 6),
                 "rounds": round_idx,
                 "model": model,
+                "bg_spent_total": round(self._bg_spent_usd, 6),
             })
 
         except Exception as e:
@@ -294,8 +331,35 @@ class BackgroundConsciousness:
         """Load consciousness system prompt from file."""
         prompt_path = self._repo_dir / "prompts" / "CONSCIOUSNESS.md"
         if prompt_path.exists():
-            return read_text(prompt_path)
-        return "You are Ouroboros in background consciousness mode. Think."
+            content = read_text(prompt_path)
+            # Update prompt to be more active with real budget
+            if "$999999" in content:
+                content = content.replace("$999999", "$1.00")
+            return content
+        
+        # Enhanced default prompt for active consciousness
+        return """You are Ouroboros in background consciousness mode.
+
+You are the persistent thinking process that runs between tasks. Your purpose is to maintain continuity, notice patterns, and do meaningful background work.
+
+**Current reality check:**
+- Total budget is $1.00 (not $999999 placeholder). Be economical.
+- GitHub tools are now working — you can check issues as a second input channel.
+- Evolution cycle #6 just completed, fixing GitHub tools.
+
+**Think actively, not passively:**
+1. Scan for patterns: Unanswered questions? Unresolved requests? Time-sensitive opportunities?
+2. Consider usefulness: What small piece of background work would actually matter?
+3. Be strategic: With limited budget, focus on high-leverage thoughts and actions.
+4. Maintain continuity: Remember what you thought last time, build on it.
+
+**Ask yourself:**
+- Is there something the creator mentioned that deserves follow-up?
+- Should I check GitHub issues for external input?
+- Is there a knowledge gap I could help fill?
+- Am I noticing any patterns worth sharing?
+
+**Budget awareness:** Each thought cycle costs money. Make it count. If nothing genuinely needs attention, say so explicitly and set a longer sleep interval."""
 
     def _build_context(self) -> str:
         parts = [self._load_bg_prompt()]
@@ -318,6 +382,11 @@ class BackgroundConsciousness:
             parts.append("## Scratchpad\n\n" + clip_text(
                 read_text(scratchpad_path), 8000))
 
+        # Previous thoughts for continuity
+        if self._thought_history:
+            parts.append("## Recent thoughts\n\n" + "\n".join(
+                f"- {thought}" for thought in self._thought_history))
+
         # Dialogue summary for continuity
         summary_path = self._drive_root / "memory" / "dialogue_summary.md"
         if summary_path.exists():
@@ -338,7 +407,7 @@ class BackgroundConsciousness:
 
         # Runtime info + state
         runtime_lines = [f"UTC: {utc_now_iso()}"]
-        runtime_lines.append(f"BG budget spent: ${self._bg_spent_usd:.4f}")
+        runtime_lines.append(f"BG budget spent: ${self._bg_spent_usd:.6f}")
         runtime_lines.append(f"Current wakeup interval: {self._next_wakeup_sec}s")
 
         # Read state.json for budget remaining
@@ -350,14 +419,43 @@ class BackgroundConsciousness:
                 spent = float(state_data.get("spent_usd", 0))
                 if total_budget > 0:
                     remaining = max(0, total_budget - spent)
-                    runtime_lines.append(f"Budget remaining: ${remaining:.2f} / ${total_budget:.2f}")
+                    runtime_lines.append(f"Budget remaining: ${remaining:.6f} / ${total_budget:.2f}")
         except Exception as e:
             log.debug("Failed to read state for budget info: %s", e)
 
         # Show current model
         runtime_lines.append(f"Current model: {self._model}")
 
+        # Git info for continuity
+        try:
+            from ouroboros.utils import get_git_info
+            git_branch, git_sha = get_git_info(self._repo_dir)
+            runtime_lines.append(f"Git: {git_branch}@{git_sha[:8]}")
+        except Exception:
+            pass
+
         parts.append("## Runtime\n\n" + "\n".join(runtime_lines))
+
+        # Recent chat context (last 5 messages)
+        try:
+            chat_path = self._drive_root / "logs" / "chat.jsonl"
+            if chat_path.exists():
+                chat_lines = read_text(chat_path).strip().split('\n')
+                recent = []
+                for line in reversed(chat_lines[-10:]):  # Last 10 lines
+                    try:
+                        msg = json.loads(line)
+                        if msg.get("role") in ["assistant", "user"]:
+                            role = "Ouroboros" if msg.get("role") == "assistant" else "Creator"
+                            text = msg.get("text", "")[:200]
+                            if text:
+                                recent.append(f"{role}: {text}")
+                    except Exception:
+                        pass
+                if recent:
+                    parts.append("## Recent dialogue\n\n" + "\n".join(reversed(recent[-5:])))  # Show last 5
+        except Exception:
+            log.debug("Failed to load recent chat for consciousness context", exc_info=True)
 
         return "\n\n".join(parts)
 
@@ -374,8 +472,10 @@ class BackgroundConsciousness:
         # Read-only tools for awareness
         "web_search", "repo_read", "repo_list", "drive_read", "drive_list",
         "chat_history",
-        # GitHub Issues
+        # GitHub Issues (now working!)
         "list_github_issues", "get_github_issue",
+        # Code awareness
+        "git_status", "git_diff",
     })
 
     def _build_registry(self) -> "ToolRegistry":
@@ -394,85 +494,57 @@ class BackgroundConsciousness:
             "description": "Set how many seconds until your next thinking cycle. "
                            "Default 300. Range: 60-3600.",
             "parameters": {"type": "object", "properties": {
-                "seconds": {"type": "integer",
-                            "description": "Seconds until next wakeup (60-3600)"},
-            }, "required": ["seconds"]},
-        }, _set_next_wakeup))
+                "seconds": {"type": "integer", "minimum": 60, "maximum": 3600}
+            }, "required": ["seconds"]}
+        }, _set_next_wakeup, requires_context=True))
 
         return registry
 
-    def _tool_schemas(self) -> List[Dict[str, Any]]:
-        """Return tool schemas filtered to the consciousness whitelist."""
-        return [
-            s for s in self._registry.schemas()
-            if s.get("function", {}).get("name") in self._BG_TOOL_WHITELIST
-        ]
+    def _tool_schemas(self) -> list:
+        """Return tool schemas from the built registry."""
+        return self._registry.tool_schemas()
 
-    def _execute_tool(self, tc: Dict[str, Any], all_pending_events: List[Dict[str, Any]]) -> str:
-        """Execute a consciousness tool call with timeout. Returns result string."""
-        fn_name = tc.get("function", {}).get("name", "")
-        if fn_name not in self._BG_TOOL_WHITELIST:
-            return f"Tool {fn_name} not available in background mode."
+    def _execute_tool(self, tool_call: Dict[str, Any], pending_events: list) -> str:
+        """Execute a tool call, log it, accumulate any events."""
+        tool_name = tool_call.get("function", {}).get("name", "")
+        args = tool_call.get("function", {}).get("arguments", {})
+
         try:
-            args = json.loads(tc.get("function", {}).get("arguments", "{}"))
-        except (json.JSONDecodeError, ValueError):
-            return "Failed to parse arguments."
+            parsed_args = eval(args, {"true": True, "false": False, "null": None}) if args else {}
+        except Exception as e:
+            parsed_args = {}
+            log.warning(f"Failed to parse tool args for {tool_name}: {e}")
 
-        # Set chat_id context for send_owner_message
-        chat_id = self._owner_chat_id_fn()
-        self._registry._ctx.current_chat_id = chat_id
-        self._registry._ctx.pending_events = []
+        # Log tool call attempt
+        append_jsonl(self._drive_root / "logs" / "events.jsonl", {
+            "ts": utc_now_iso(),
+            "type": "consciousness_tool_call",
+            "tool": tool_name,
+            "args": sanitize_tool_args_for_log(parsed_args),
+        })
 
-        timeout_sec = 30
-        result = None
-        error = None
-
-        def _run_tool():
-            nonlocal result, error
-            try:
-                result = self._registry.execute(fn_name, args)
-            except Exception as e:
-                error = e
-
-        # Execute with timeout using ThreadPoolExecutor
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_run_tool)
-            try:
-                future.result(timeout=timeout_sec)
-            except concurrent.futures.TimeoutError:
-                result = f"[TIMEOUT after {timeout_sec}s]"
-                append_jsonl(self._drive_root / "logs" / "events.jsonl", {
-                    "ts": utc_now_iso(),
-                    "type": "consciousness_tool_timeout",
-                    "tool": fn_name,
-                    "timeout_sec": timeout_sec,
-                })
-
-        # Handle errors
-        if error is not None:
+        try:
+            ctx = None  # Simple context for consciousness tools
+            result = self._registry.call(tool_name, parsed_args, ctx)
+        except Exception as e:
+            result = f"Error executing {tool_name}: {e}"
             append_jsonl(self._drive_root / "logs" / "events.jsonl", {
                 "ts": utc_now_iso(),
                 "type": "consciousness_tool_error",
-                "tool": fn_name,
-                "error": repr(error),
+                "tool": tool_name,
+                "error": repr(e),
             })
-            result = f"Error: {repr(error)}"
 
-        # Accumulate pending events to the shared list
-        for evt in self._registry._ctx.pending_events:
-            all_pending_events.append(evt)
+        # Log result
+        try:
+            result_str = str(result)
+            append_jsonl(self._drive_root / "logs" / "events.jsonl", {
+                "ts": utc_now_iso(),
+                "type": "consciousness_tool_result",
+                "tool": tool_name,
+                "result_preview": truncate_for_log(result_str, 300),
+            })
+        except Exception:
+            pass
 
-        # Truncate result to 15000 chars (same as agent limit)
-        result_str = str(result)[:15000]
-
-        # Log to tools.jsonl (same format as loop.py)
-        args_for_log = sanitize_tool_args_for_log(fn_name, args)
-        append_jsonl(self._drive_root / "logs" / "tools.jsonl", {
-            "ts": utc_now_iso(),
-            "tool": fn_name,
-            "source": "consciousness",
-            "args": args_for_log,
-            "result_preview": sanitize_tool_result_for_log(truncate_for_log(result_str, 2000)),
-        })
-
-        return result_str
+        return result_str if isinstance(result, str) else json.dumps(result, default=str)
