@@ -659,7 +659,7 @@ def run_llm_loop(
 
     llm_trace: Dict[str, Any] = {"assistant_notes": [], "tool_calls": []}
     accumulated_usage: Dict[str, Any] = {}
-    max_retries = 3
+    max_retries = 10
     # Wire module-level registry ref so tool_discovery handlers work outside run_llm_loop too
     from ouroboros.tools import tool_discovery as _td
     _td.set_registry(tools)

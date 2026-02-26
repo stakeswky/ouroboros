@@ -27,7 +27,7 @@ install_apply_patch()
 # ----------------------------
 # 1) Config — all hardcoded for server deployment
 # ----------------------------
-OPENROUTER_API_KEY = "sk-mxpstxvjpwscbwcanxmctnwwshgcvrqtgjbevualkapcctqw"
+OPENROUTER_API_KEY = "sk-oNk1Adz6q3FrVDVU3kT68ooQ97q0FT5mBfXXwHmIFyj5ls7f"
 TELEGRAM_BOT_TOKEN = "7633641953:AAFI9FDpehDVS1rikp8i6D08eElpXo58xjc"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_USER = "stakeswky"
@@ -37,9 +37,9 @@ TOTAL_BUDGET_LIMIT = 400.0  # ¥400 CNY
 OPENAI_API_KEY = OPENROUTER_API_KEY  # reuse for web search via oogg.top
 ANTHROPIC_API_KEY = ""
 
-MODEL_MAIN = "deepseek-ai/DeepSeek-V3.2"
-MODEL_CODE = "deepseek-ai/DeepSeek-V3.2"
-MODEL_LIGHT = "deepseek-ai/DeepSeek-V3.2"
+MODEL_MAIN = "anthropic/claude-opus-4.6"
+MODEL_CODE = "anthropic/claude-opus-4.6"
+MODEL_LIGHT = "anthropic/claude-opus-4.6"
 
 MAX_WORKERS = 3  # conservative for 1.9G RAM
 # SiliconFlow L1 rate limits

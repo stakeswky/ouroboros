@@ -103,53 +103,23 @@ def fetch_openrouter_pricing() -> Dict[str, Tuple[float, float, float]]:
 
 
 class LLMClient:
-    """OpenRouter API wrapper. All LLM calls go through this class."""
+    """LLM API wrapper using requests. All LLM calls go through this class."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        base_url: str = "https://api.siliconflow.cn/v1",
+        base_url: str = "https://oogg.top/v1",
     ):
         self._api_key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        self._base_url = base_url
-        self._client = None
-
-    def _get_client(self):
-        if self._client is None:
-            from openai import OpenAI
-            self._client = OpenAI(
-                base_url=self._base_url,
-                api_key=self._api_key,
-                default_headers={
-                    "HTTP-Referer": "https://colab.research.google.com/",
-                    "X-Title": "Ouroboros",
-                },
-            )
-        return self._client
-
-    def _fetch_generation_cost(self, generation_id: str) -> Optional[float]:
-        """Fetch cost from OpenRouter Generation API as fallback."""
-        try:
-            import requests
-            url = f"{self._base_url.rstrip('/')}/generation?id={generation_id}"
-            resp = requests.get(url, headers={"Authorization": f"Bearer {self._api_key}"}, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json().get("data") or {}
-                cost = data.get("total_cost") or data.get("usage", {}).get("cost")
-                if cost is not None:
-                    return float(cost)
-            # Generation might not be ready yet — retry once after short delay
-            time.sleep(0.5)
-            resp = requests.get(url, headers={"Authorization": f"Bearer {self._api_key}"}, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json().get("data") or {}
-                cost = data.get("total_cost") or data.get("usage", {}).get("cost")
-                if cost is not None:
-                    return float(cost)
-        except Exception:
-            log.debug("Failed to fetch generation cost from OpenRouter", exc_info=True)
-            pass
-        return None
+        self._base_url = base_url.rstrip("/")
+        import requests as _req
+        self._session = _req.Session()
+        self._session.headers.update({
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://colab.research.google.com/",
+            "X-Title": "Ouroboros",
+        })
 
     def chat(
         self,
@@ -160,41 +130,25 @@ class LLMClient:
         max_tokens: int = 16384,
         tool_choice: str = "auto",
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Single LLM call. Returns: (response_message_dict, usage_dict with cost)."""
-        client = self._get_client()
+        """Single LLM call via requests. Returns: (response_message_dict, usage_dict)."""
+        import json as _json
+
         effort = normalize_reasoning_effort(reasoning_effort)
 
-        extra_body: Dict[str, Any] = {
-            "reasoning": {"effort": effort, "exclude": True},
-        }
-
-        # Pin Anthropic models to Anthropic provider for prompt caching
-        if model.startswith("anthropic/"):
-            extra_body["provider"] = {
-                "order": ["Anthropic"],
-                "allow_fallbacks": False,
-                "require_parameters": True,
-            }
-
-        kwargs: Dict[str, Any] = {
+        body: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
-            "extra_body": extra_body,
         }
         if tools:
-            # Add cache_control to last tool for Anthropic prompt caching
-            # This caches all tool schemas (they never change between calls)
-            tools_with_cache = [t for t in tools]  # shallow copy
-            if tools_with_cache:
-                last_tool = {**tools_with_cache[-1]}  # copy last tool
-                last_tool["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
-                tools_with_cache[-1] = last_tool
-            kwargs["tools"] = tools_with_cache
-            kwargs["tool_choice"] = tool_choice
+            body["tools"] = tools
+            body["tool_choice"] = tool_choice
 
-        resp = client.chat.completions.create(**kwargs)
-        resp_dict = resp.model_dump()
+        url = f"{self._base_url}/chat/completions"
+        resp = self._session.post(url, json=body, timeout=300)
+        resp.raise_for_status()
+        resp_dict = resp.json()
+
         usage = resp_dict.get("usage") or {}
         choices = resp_dict.get("choices") or [{}]
         msg = (choices[0] if choices else {}).get("message") or {}
@@ -205,52 +159,20 @@ class LLMClient:
             if isinstance(prompt_details, dict) and prompt_details.get("cached_tokens"):
                 usage["cached_tokens"] = int(prompt_details["cached_tokens"])
 
-        # Extract cache_write_tokens from prompt_tokens_details if available
-        # OpenRouter: "cache_write_tokens"
-        # Native Anthropic: "cache_creation_tokens" or "cache_creation_input_tokens"
-        if not usage.get("cache_write_tokens"):
-            prompt_details_for_write = usage.get("prompt_tokens_details") or {}
-            if isinstance(prompt_details_for_write, dict):
-                cache_write = (prompt_details_for_write.get("cache_write_tokens")
-                              or prompt_details_for_write.get("cache_creation_tokens")
-                              or prompt_details_for_write.get("cache_creation_input_tokens"))
-                if cache_write:
-                    usage["cache_write_tokens"] = int(cache_write)
-
-        # Ensure cost is present in usage (OpenRouter includes it, but fallback if missing)
-        if not usage.get("cost"):
-            gen_id = resp_dict.get("id") or ""
-            if gen_id:
-                cost = self._fetch_generation_cost(gen_id)
-                if cost is not None:
-                    usage["cost"] = cost
-
         return msg, usage
 
     def vision_query(
         self,
         prompt: str,
-        images: List[Dict[str, Any]],
-        model: str = "anthropic/claude-sonnet-4.6",
-        max_tokens: int = 1024,
+        images: List[Dict[str, str]],
+        model: str = "",
         reasoning_effort: str = "low",
+        max_tokens: int = 4096,
     ) -> Tuple[str, Dict[str, Any]]:
-        """
-        Send a vision query to an LLM. Lightweight — no tools, no loop.
+        """Send a vision query with text + images."""
+        if not model:
+            model = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
 
-        Args:
-            prompt: Text instruction for the model
-            images: List of image dicts. Each dict must have either:
-                - {"url": "https://..."} — for URL images
-                - {"base64": "<b64>", "mime": "image/png"} — for base64 images
-            model: VLM-capable model ID
-            max_tokens: Max response tokens
-            reasoning_effort: Effort level
-
-        Returns:
-            (text_response, usage_dict)
-        """
-        # Build multipart content
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
         for img in images:
             if "url" in img:
@@ -264,8 +186,6 @@ class LLMClient:
                     "type": "image_url",
                     "image_url": {"url": f"data:{mime};base64,{img['base64']}"},
                 })
-            else:
-                log.warning("vision_query: skipping image with unknown format: %s", list(img.keys()))
 
         messages = [{"role": "user", "content": content}]
         response_msg, usage = self.chat(
@@ -279,12 +199,10 @@ class LLMClient:
         return text, usage
 
     def default_model(self) -> str:
-        """Return the single default model from env. LLM switches via tool if needed."""
-        return os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+        return os.environ.get("OUROBOROS_MODEL", "anthropic/claude-opus-4.6")
 
     def available_models(self) -> List[str]:
-        """Return list of available models from env (for switch_model tool schema)."""
-        main = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+        main = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-opus-4.6")
         code = os.environ.get("OUROBOROS_MODEL_CODE", "")
         light = os.environ.get("OUROBOROS_MODEL_LIGHT", "")
         models = [main]
@@ -293,3 +211,4 @@ class LLMClient:
         if light and light != main and light != code:
             models.append(light)
         return models
+
