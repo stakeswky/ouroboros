@@ -405,6 +405,7 @@ while True:
         user_id = msg.get("from", {}).get("id", 0)
         log_chat("user", chat_id, user_id, text)
         TG.set_reaction(chat_id, msg["message_id"], "👀")
+        TG.set_reaction(chat_id, msg["message_id"], "👀")
 
         # Supervisor commands
         cmd_result = _handle_supervisor_command(text, chat_id, offset)
