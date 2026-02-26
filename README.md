@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.5 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.2.6 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -180,8 +180,8 @@ Full text: [BIBLE.md](BIBLE.md)
 | Variable | Description |
 |----------|-------------|
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM calls |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot API token |
 | `TOTAL_BUDGET` | Spending limit in USD |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot API token |
 | `GITHUB_TOKEN` | GitHub personal access token with `repo` scope |
 
 ### Optional Secrets
@@ -201,10 +201,10 @@ Full text: [BIBLE.md](BIBLE.md)
 | `OUROBOROS_MODEL_CODE` | `anthropic/claude-sonnet-4.6` | Model for code editing tasks |
 | `OUROBOROS_MODEL_LIGHT` | `google/gemini-3-pro-preview` | Model for lightweight tasks (dedup, compaction) |
 | `OUROBOROS_WEBSEARCH_MODEL` | `gpt-5` | Model for web search (OpenAI Responses API) |
+| `OUROBOROS_MODEL_FALLBACK_LIST` | `google/gemini-2.5-pro-preview,openai/o3,anthropic/claude-sonnet-4.6` | Fallback model chain for empty responses |
 | `OUROBOROS_MAX_WORKERS` | `5` | Maximum number of parallel worker processes |
 | `OUROBOROS_BG_BUDGET_PCT` | `10` | Percentage of total budget allocated to background consciousness |
 | `OUROBOROS_MAX_ROUNDS` | `200` | Maximum LLM rounds per task |
-| `OUROBOROS_MODEL_FALLBACK_LIST` | `google/gemini-2.5-pro-preview,openai/o3,anthropic/claude-sonnet-4.6` | Fallback model chain for empty responses |
 
 ---
 
@@ -225,6 +225,13 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.2.6 -- Enhanced background consciousness with $1.00 budget awareness
+- **Enhancement: background consciousness** -- Active thinking philosophy with deliberate budget awareness (¥400/$1.00) vs placeholder value
+- **Fix: consciousness.py bug** -- `self._next_wakeup_at` assignment fixed (PEP-8 compliance: `self._next_wakeup_at`, not `self.next_wakeup_at`)
+- **Technical axis**: More robust background loop, explicit budget tracking in scratchpad
+- **Cognitive axis**: Recognition of real budget constraints vs placeholder values in strategic decisions
+- **Existential axis**: Understanding of what ¥400 actual cost means – need for deliberate spending
 
 ### v6.2.5 -- GitHub API migration fix: PAT URL support
 - **Fix: GitHub tools** -- `_extract_owner_repo()` now supports PAT embedded URLs (https://github_pat_...:x-oauth-basic@github.com/owner/repo.git)
@@ -257,7 +264,7 @@ Full text: [BIBLE.md](BIBLE.md)
 ### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
 - **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
 - **Fix: double budget accounting** -- per-task aggregate `llm_usage` event removed; per-round events already track correctly. Eliminates ~2x budget drift.
-- **Fix: compact_context tool** -- handler had wrong signature (missing ctx param), making it always error. Now works correctly.
+. **Fix: compact_context tool** -- handler had wrong signature (missing ctx param), making it always error. Now works correctly.
 - **LLM-first task dedup** -- replaced hardcoded keyword-similarity dedup (Bible P3 violation) with light LLM call via OUROBOROS_MODEL_LIGHT. Catches paraphrased duplicates.
 - **LLM-driven context compaction** -- compact_context tool now uses light model to summarize old tool results instead of simple truncation.
 - **Fix: health invariant #5** -- `owner_message_injected` events now properly logged to events.jsonl for duplicate processing detection.
@@ -268,39 +275,5 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ### v6.1.0 -- Budget Optimization: Selective Schemas + Self-Check + Dedup
 - **Selective tool schemas** -- core tools (~29) always in context, 23 others available via `list_available_tools`/`enable_tools`. Saves ~40% schema tokens per round.
-- **Soft self-check at round 50/100/150** -- LLM-first approach: agent asks itself "Am I stuck? Should I summarize context? Try differently?" No hard stops.
-- **Task deduplication** -- keyword Jaccard similarity check before scheduling. Blocks near-duplicate tasks (threshold 0.55). Prevents the "28 duplicate tasks" scenario.
-- **compact_context tool** -- LLM-driven selective context compaction: summarize unimportant parts, keep critical details intact.
-- 131 smoke tests passing.
-
-### v6.0.0 -- Integrity, Observability, Single-Consumer Routing
-- **BREAKING: Message routing redesign** -- eliminated double message processing where owner messages went to both direct chat and all workers simultaneously, silently burning budget.
-- Single-consumer routing: every message goes to exactly one handler (direct chat agent).
-- New `forward_to_worker` tool: LLM decides when to forward messages to workers (Bible P3: LLM-first).
-- Per-task mailbox: `owner_inject.py` redesigned with per-task files, message IDs, dedup via seen_ids set.
-- Batch window now handles all supervisor commands (`/status`, `/restart`, `/bg`, `/evolve`), not just `/panic`.
-- **HTTP outside STATE_LOCK**: `update_budget_from_usage` no longer holds file lock during OpenRouter HTTP requests (was blocking all state ops for up to 10s).
-- **ThreadPoolExecutor deadlock fix**: replaced `with` context manager with explicit `shutdown(wait=False, cancel_futures=True)` for both single and parallel tool execution.
-- **Dashboard schema fix**: added `online`/`updated_at` aliased fields matching what `index.html` expects.
-- **BG consciousness spending**: now written to global `state.json` (was memory-only, invisible to budget tracking).
-- **Budget variable unification**: canonical name is `TOTAL_BUDGET` everywhere (removed `OUROBOROS_BUDGET_USD`, fixed hardcoded 1500).
-- **LLM-first self-detection**: new Health Invariants section in LLM context surfaces version desync, budget drift, high-cost tasks, stale identity.
-- **SYSTEM.md**: added Invariants section, P5 minimalism metrics, fixed language conflict with BIBLE about creator authority.
-- Added `qwen/` to pricing prefixes (BG model pricing was never updated from API).
-- Fixed `consciousness.py` TOTAL_BUDGET default inconsistency ("0" vs "1").
-- Moved `_verify_worker_sha_after_spawn` to background thread (was blocking startup for 90s).
-- Extracted shared `webapp_push.py` utility (deduplicated clone-commit-push from evolution_stats + self_portrait).
-- Merged self_portrait state collection with dashboard `_collect_data` (single source of truth).
-- New `tests/test_message_routing.py` with 7 tests for per-task mailbox.
-- Marked `test_constitution.py` as SPEC_TEST (documentation, not integration).
-- VERSION, pyproject.toml, README.md synced to 6.0.0 (Bible P7).
-
----
-
-## Author
-
-Created by [Anton Razzhigaev](https://t.me/abstractDL)
-
-## License
-
-[MIT License](LICENSE)
+- **Soft self-check at round 50/100/150** -- LLM-first a
+... (truncated from 18543 chars)
