@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.5.4 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.5.5 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,11 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+### v6.5.5 -- Extract health checks from agent.py
+- Extracted startup health/state verification logic from `ouroboros/agent.py` into new `ouroboros/health.py`
+- Kept `OuroborosAgent` health methods as thin wrappers for backward compatibility
+- No behavior changes to restart verification, version sync, uncommitted-change rescue, or budget checks
+
 ### v6.5.4 -- Smart tool result compression + model pricing overhaul
 - Tool result truncation now preserves head + tail (was head-only), with content-aware heuristics for JSON/code/text
 - Model pricing table expanded from 2 to 25 entries covering all oogg.top proxy models
