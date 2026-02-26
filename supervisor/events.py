@@ -128,9 +128,10 @@ def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
         cost = float(evt.get("cost_usd") or 0)
         rounds = int(evt.get("total_rounds") or 0)
 
-        # Heuristic: if cost > $0.10 and rounds >= 1, consider it successful
-        # Empty responses typically cost < $0.01 and have 0-1 rounds
-        if cost > 0.10 and rounds >= 1:
+        # Heuristic: if rounds >= 3, consider it successful
+        # siliconflow.cn reports cost=0, so we use rounds as the primary signal
+        # Empty responses / failures typically have 0-2 rounds
+        if rounds >= 3:  # rounds-based: siliconflow reports cost=0
             # Success: reset failure counter
             st["evolution_consecutive_failures"] = 0
             ctx.save_state(st)
@@ -156,7 +157,7 @@ def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
         # agent performance by conditioning on past outcomes
         _record_evolution_reflexion(
             ctx, task_id, cost, rounds,
-            success=(cost > 0.10 and rounds >= 1),
+            success=(rounds >= 3),
             cycle=int(st.get("evolution_cycle") or 0),
         )
 
@@ -240,7 +241,7 @@ def _handle_promote_to_stable(evt: Dict[str, Any], ctx: Any) -> None:
     try:
         sp.run(["git", "fetch", "origin"], cwd=str(ctx.REPO_DIR), check=True)
         sp.run(
-            ["git", "push", "origin", f"{ctx.BRANCH_DEV}:{ctx.BRANCH_STABLE}"],
+            ["git", "push", "--force", "origin", f"{ctx.BRANCH_DEV}:{ctx.BRANCH_STABLE}"],
             cwd=str(ctx.REPO_DIR), check=True,
         )
         new_sha = sp.run(

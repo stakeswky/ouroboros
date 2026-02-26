@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.4.0 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.4.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,11 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.4.1 -- Fix: promote_to_stable force push + evolution success detection
+- **Fix: promote_to_stable** -- Added --force flag to git push, fixing persistent failures when ouroboros-stable diverges from ouroboros (e.g. after rollbacks).
+- **Fix: evolution success detection** -- Replaced cost-based success heuristic (cost > $0.10) with rounds-based check (rounds >= 3). Cost is always 0 on siliconflow.cn, causing all cycles to be marked as failures and evolution to pause after 3 cycles.
+- 137 tests passing.
 
 ### v6.4.0 -- Reflexion: evolution learns from its own outcomes
 - **New: Reflexion pattern** -- Evolution cycles now record structured outcomes (success/failure, cost, rounds, error details) to `evolution_reflexion.jsonl`. Inspired by Reflexion paper (Shinn et al.) via Yohei Nakajima's NeurIPS 2025 survey.
