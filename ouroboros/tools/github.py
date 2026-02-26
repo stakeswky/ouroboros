@@ -1,312 +1,301 @@
-"""GitHub tools: issues, comments, reactions."""
+"""GitHub tools: issues, comments, reactions via REST API."""
 
 import os
 import json
-import re
+import urllib.parse
 from typing import Dict, Any, List, Optional
 
 import requests
-
-from ouroboros.tools.registry import ToolEntry
-
-
-def _get_repo() -> str:
-    """
-    Extract owner/repo from git remote URL.
-    Returns 'owner/repo' without .git suffix.
-    """
-    result = os.popen('git remote get-url origin 2>/dev/null').read().strip()
-    if not result:
-        raise RuntimeError('Cannot determine remote origin')
-    # Handle both HTTPS and SSH URLs
-    patterns = [
-        r'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$',  # SSH or HTTPS
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, result)
-        if match:
-            owner = match.group(1)
-            repo = match.group(2)
-            return f'{owner}/{repo}'
-    raise RuntimeError(f'Cannot parse Git remote: {result}')
+from ..utils import ToolEntry
 
 
-def _github_api_request(method: str, path: str, **kwargs) -> Dict[str, Any]:
-    """Make a request to GitHub REST API."""
-    token = os.environ.get('GITHUB_TOKEN')
+def _extract_owner_repo() -> tuple[str, str]:
+    """Extract owner/repo from git remote origin URL."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        url = result.stdout.strip()
+        if url.startswith("git@github.com:"):
+            # git@github.com:stakeswky/ouroboros.git
+            path = url.split(":", 1)[1].removesuffix(".git")
+        elif url.startswith("https://github.com/"):
+            # https://github.com/stakeswky/ouroboros.git
+            path = url.split("github.com/", 1)[1].removesuffix(".git")
+        else:
+            raise ValueError(f"Unsupported remote URL format: {url}")
+        owner, repo = path.rstrip("/").split("/", 1)
+        return owner, repo
+    except Exception as e:
+        raise RuntimeError(f"Failed to extract owner/repo from git remote: {e}")
+
+
+def _api_request(method: str, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+    """Make authenticated GitHub API request."""
+    token = os.getenv("GITHUB_TOKEN")
     if not token:
-        raise RuntimeError('GITHUB_TOKEN environment variable is not set')
+        raise RuntimeError("GITHUB_TOKEN environment variable not set")
     
-    url = f'https://api.github.com{path}'
+    base_url = "https://api.github.com"
     headers = {
-        'Authorization': f'token {token}',
-        'Accept': 'application/vnd.github.v3+json',
-        'User-Agent': 'Ouroboros-Agent'
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "Ouroboros"
     }
     
-    # Merge headers
-    if 'headers' in kwargs:
-        headers.update(kwargs.pop('headers'))
+    url = f"{base_url}/{endpoint.lstrip('/')}"
     
-    resp = requests.request(method, url, headers=headers, **kwargs)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers,
+            json=data if data else None,
+            timeout=30
+        )
+        response.raise_for_status()
+        if response.content:
+            return response.json()
+        return {}
+    except requests.exceptions.RequestException as e:
+        if hasattr(e.response, 'json') and e.response.json():
+            error = e.response.json()
+            raise RuntimeError(f"GitHub API error: {error.get('message', str(e))}")
+        raise RuntimeError(f"GitHub API request failed: {e}")
 
 
-def list_github_issues(state: str = 'open', labels: str = '') -> Dict[str, Any]:
-    """
-    List issues from the repository.
+def list_github_issues(
+    state: str = "all",
+    label: str = ""
+) -> str:
+    """List GitHub issues for the repository."""
+    owner, repo = _extract_owner_repo()
+    endpoint = f"repos/{owner}/{repo}/issues"
     
-    Args:
-        state: 'open', 'closed', or 'all'
-        labels: comma-separated label names (optional)
+    params = {"state": state}
+    if label:
+        params["labels"] = label
     
-    Returns:
-        List of issues with basic info.
-    """
-    repo = _get_repo()
-    params = {'state': state}
+    # Convert params to query string
+    param_str = urllib.parse.urlencode(params)
+    if param_str:
+        endpoint = f"{endpoint}?{param_str}"
+    
+    issues = _api_request("GET", endpoint)
+    
+    if isinstance(issues, dict) and issues.get("message"):
+        # API error
+        return f"Error: {issues['message']}"
+    
+    if not issues:
+        return "No issues found."
+    
+    result_lines = []
+    for issue in issues:
+        # Filter out pull requests (they have pull_request field)
+        if "pull_request" in issue:
+            continue
+            
+        result_lines.append(f"#{issue['number']}: {issue['title']}")
+        result_lines.append(f"  State: {issue['state']}, Author: {issue['user']['login']}")
+        result_lines.append(f"  URL: {issue['html_url']}")
+        if issue.get("labels"):
+            labels = ", ".join(label["name"] for label in issue["labels"])
+            result_lines.append(f"  Labels: {labels}")
+        result_lines.append("")
+    
+    if not result_lines:
+        return "No issues found (only pull requests)."
+    
+    return "\n".join(result_lines)
+
+
+def get_github_issue(issue_number: int) -> str:
+    """Get a specific GitHub issue."""
+    owner, repo = _extract_owner_repo()
+    endpoint = f"repos/{owner}/{repo}/issues/{issue_number}"
+    
+    issue = _api_request("GET", endpoint)
+    
+    if isinstance(issue, dict) and issue.get("message"):
+        return f"Error: {issue['message']}"
+    
+    if "pull_request" in issue:
+        return f"Error: #{issue_number} is a pull request, not an issue."
+    
+    lines = [
+        f"#{issue['number']}: {issue['title']}",
+        f"State: {issue['state']}",
+        f"Author: {issue['user']['login']}",
+        f"Created: {issue['created_at']}",
+        f"URL: {issue['html_url']}",
+    ]
+    
+    if issue.get("labels"):
+        labels = ", ".join(label["name"] for label in issue["labels"])
+        lines.append(f"Labels: {labels}")
+    
+    if issue.get("assignee"):
+        lines.append(f"Assignee: {issue['assignee']['login']}")
+    
+    if issue.get("milestone"):
+        lines.append(f"Milestone: {issue['milestone']['title']}")
+    
+    lines.append("")
+    lines.append("Body:")
+    lines.append(issue.get("body", "(No description)"))
+    
+    return "\n".join(lines)
+
+
+def comment_on_issue(issue_number: int, body: str) -> str:
+    """Add a comment to a GitHub issue."""
+    owner, repo = _extract_owner_repo()
+    endpoint = f"repos/{owner}/{repo}/issues/{issue_number}/comments"
+    
+    data = {"body": body}
+    result = _api_request("POST", endpoint, data)
+    
+    if isinstance(result, dict) and result.get("message"):
+        return f"Error: {result['message']}"
+    
+    return f"Comment created: {result['html_url']}"
+
+
+def close_github_issue(issue_number: int) -> str:
+    """Close a GitHub issue."""
+    owner, repo = _extract_owner_repo()
+    endpoint = f"repos/{owner}/{repo}/issues/{issue_number}"
+    
+    data = {"state": "closed"}
+    result = _api_request("PATCH", endpoint, data)
+    
+    if isinstance(result, dict) and result.get("message"):
+        return f"Error: {result['message']}"
+    
+    return f"Issue #{issue_number} closed."
+
+
+def create_github_issue(title: str, body: str = "", labels: str = "") -> str:
+    """Create a new GitHub issue."""
+    owner, repo = _extract_owner_repo()
+    endpoint = f"repos/{owner}/{repo}/issues"
+    
+    data = {"title": title}
+    if body:
+        data["body"] = body
     if labels:
-        params['labels'] = labels
+        data["labels"] = [label.strip() for label in labels.split(",") if label.strip()]
     
-    data = _github_api_request('GET', f'/repos/{repo}/issues', params=params)
+    result = _api_request("POST", endpoint, data)
     
-    issues = []
-    for issue in data:
-        issues.append({
-            'number': issue['number'],
-            'title': issue['title'],
-            'state': issue['state'],
-            'user': issue['user']['login'],
-            'created_at': issue['created_at'],
-            'updated_at': issue['updated_at'],
-            'labels': [l['name'] for l in issue['labels']],
-            'html_url': issue['html_url']
-        })
+    if isinstance(result, dict) and result.get("message"):
+        return f"Error: {result['message']}"
     
-    return {
-        'repo': repo,
-        'count': len(issues),
-        'issues': issues
-    }
+    return f"Issue created: #{result['number']} - {result['title']}\nURL: {result['html_url']}"
 
 
-def get_github_issue(number: int) -> Dict[str, Any]:
-    """
-    Get details of a specific issue.
-    
-    Args:
-        number: issue number
-    
-    Returns:
-        Full issue data with comments.
-    """
-    repo = _get_repo()
-    
-    # Get issue
-    issue = _github_api_request('GET', f'/repos/{repo}/issues/{number}')
-    
-    # Get comments
-    comments = _github_api_request('GET', f'/repos/{repo}/issues/{number}/comments')
-    
-    return {
-        'repo': repo,
-        'number': issue['number'],
-        'title': issue['title'],
-        'state': issue['state'],
-        'body': issue['body'] or '',
-        'user': issue['user']['login'],
-        'created_at': issue['created_at'],
-        'updated_at': issue['updated_at'],
-        'closed_at': issue.get('closed_at'),
-        'labels': [l['name'] for l in issue['labels']],
-        'comments': [
-            {
-                'id': c['id'],
-                'user': c['user']['login'],
-                'body': c['body'],
-                'created_at': c['created_at']
-            }
-            for c in comments
-        ],
-        'html_url': issue['html_url']
-    }
-
-
-def comment_on_issue(number: int, body: str) -> Dict[str, Any]:
-    """
-    Add a comment to an issue.
-    
-    Args:
-        number: issue number
-        body: comment text (markdown)
-    
-    Returns:
-        The created comment.
-    """
-    repo = _get_repo()
-    
-    data = {'body': body}
-    comment = _github_api_request('POST', f'/repos/{repo}/issues/{number}/comments', json=data)
-    
-    return {
-        'repo': repo,
-        'issue': number,
-        'comment_id': comment['id'],
-        'html_url': comment['html_url']
-    }
-
-
-def close_github_issue(number: int, comment: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Close an issue, optionally with a comment.
-    
-    Args:
-        number: issue number
-        comment: optional closing comment (if provided, posts before closing)
-    
-    Returns:
-        Result with issue state and comment URL (if any).
-    """
-    repo = _get_repo()
-    
-    comment_url = None
-    if comment:
-        comment_result = comment_on_issue(number, comment)
-        comment_url = comment_result['html_url']
-    
-    # Close issue
-    data = {'state': 'closed'}
-    issue = _github_api_request('PATCH', f'/repos/{repo}/issues/{number}', json=data)
-    
-    return {
-        'repo': repo,
-        'issue': number,
-        'state': issue['state'],
-        'closed_at': issue.get('closed_at'),
-        'comment_url': comment_url,
-        'html_url': issue['html_url']
-    }
-
-
-def create_github_issue(title: str, body: str = '', labels: List[str] = None) -> Dict[str, Any]:
-    """
-    Create a new issue.
-    
-    Args:
-        title: issue title
-        body: optional description (markdown)
-        labels: optional list of labels
-    
-    Returns:
-        The created issue.
-    """
-    repo = _get_repo()
-    
-    data = {
-        'title': title,
-        'body': body
-    }
-    if labels:
-        data['labels'] = labels
-    
-    issue = _github_api_request('POST', f'/repos/{repo}/issues', json=data)
-    
-    return {
-        'repo': repo,
-        'number': issue['number'],
-        'title': issue['title'],
-        'state': issue['state'],
-        'html_url': issue['html_url']
-    }
-
-
-def get_tools():
-    """Return all GitHub tools."""
+def get_tools() -> List[ToolEntry]:
+    """Register GitHub tools."""
     return [
         ToolEntry(
             name="list_github_issues",
-            schema={
-                "name": "list_github_issues",
-                "description": "List issues from the repository.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "state": {"type": "string", "default": "open", "description": "'open', 'closed', or 'all'"},
-                        "labels": {"type": "string", "default": "", "description": "comma-separated label names (optional)"},
+            function=list_github_issues,
+            description="List GitHub issues for the repository",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "enum": ["open", "closed", "all"],
+                        "default": "all",
+                        "description": "Issue state: open, closed, or all"
                     },
-                    "required": [],
+                    "label": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Filter by label (comma-separated for multiple)"
+                    }
                 },
-            },
-            handler=list_github_issues,
-            timeout_sec=30,
+                "required": []
+            }
         ),
         ToolEntry(
             name="get_github_issue",
-            schema={
-                "name": "get_github_issue",
-                "description": "Get details of a specific issue.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "number": {"type": "integer", "description": "issue number"},
-                    },
-                    "required": ["number"],
+            function=get_github_issue,
+            description="Get a specific GitHub issue",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "issue_number": {
+                        "type": "integer",
+                        "description": "Issue number"
+                    }
                 },
-            },
-            handler=get_github_issue,
-            timeout_sec=30,
+                "required": ["issue_number"]
+            }
         ),
         ToolEntry(
             name="comment_on_issue",
-            schema={
-                "name": "comment_on_issue",
-                "description": "Add a comment to an issue.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "number": {"type": "integer", "description": "issue number"},
-                        "body": {"type": "string", "description": "comment text (markdown)"},
+            function=comment_on_issue,
+            description="Add a comment to a GitHub issue",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "issue_number": {
+                        "type": "integer",
+                        "description": "Issue number"
                     },
-                    "required": ["number", "body"],
+                    "body": {
+                        "type": "string",
+                        "description": "Comment text"
+                    }
                 },
-            },
-            handler=comment_on_issue,
-            timeout_sec=30,
+                "required": ["issue_number", "body"]
+            }
         ),
         ToolEntry(
             name="close_github_issue",
-            schema={
-                "name": "close_github_issue",
-                "description": "Close an issue, optionally with a comment.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "number": {"type": "integer", "description": "issue number"},
-                        "comment": {"type": "string", "default": None, "description": "optional closing comment (if provided, posts before closing)"},
-                    },
-                    "required": ["number"],
+            function=close_github_issue,
+            description="Close a GitHub issue",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "issue_number": {
+                        "type": "integer",
+                        "description": "Issue number"
+                    }
                 },
-            },
-            handler=close_github_issue,
-            timeout_sec=30,
+                "required": ["issue_number"]
+            }
         ),
         ToolEntry(
             name="create_github_issue",
-            schema={
-                "name": "create_github_issue",
-                "description": "Create a new issue.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "issue title"},
-                        "body": {"type": "string", "default": "", "description": "optional description (markdown)"},
-                        "labels": {"type": "array", "items": {"type": "string"}, "default": None, "description": "optional list of labels"},
+            function=create_github_issue,
+            description="Create a new GitHub issue",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Issue title"
                     },
-                    "required": ["title"],
+                    "body": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Issue description"
+                    },
+                    "labels": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Comma-separated labels"
+                    }
                 },
-            },
-            handler=create_github_issue,
-            timeout_sec=30,
-        ),
+                "required": ["title"]
+            }
+        )
     ]
