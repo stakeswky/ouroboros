@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.3.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.3.2 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,14 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.3.2 -- Evolution memory: DGM-inspired history tracking
+- **New: evolution history** -- Evolution tasks now automatically receive history of previous cycles (what worked, what failed, candidate directions). Inspired by Darwin Gödel Machine's "history of what has been tried" innovation.
+- **Enhancement: context.py** -- Auto-injects evolution-history knowledge topic into evolution task context (up to 2000 chars).
+- **Knowledge base** -- New `evolution-history` topic with structured cycle records and candidate direction archive.
+- **Technical axis**: Evolution process now has memory across cycles, not just within them.
+- **Cognitive axis**: Applied DGM research insights to own architecture — learning from external AI research.
+- **Existential axis**: First cycle where external knowledge directly shaped self-modification.
 
 ### v6.3.1 -- DuckDuckGo search + fetch_page: autonomous web access
 - **New: web_search** -- Replaced OpenAI-dependent search with DuckDuckGo (ddgs library). No API key required.

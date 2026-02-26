@@ -221,6 +221,17 @@ def build_llm_messages(
         if kb_index.strip():
             semi_stable_parts.append("## Knowledge base\n\n" + clip_text(kb_index, 50000))
 
+    # For evolution tasks: inject evolution history (DGM-inspired)
+    # "history of what has been tried before" improves cycle quality
+    if task_type == "evolution":
+        evo_hist_path = env.drive_path("memory/knowledge/evolution-history.md")
+        if evo_hist_path.exists():
+            evo_hist = _safe_read(evo_hist_path)
+            if evo_hist.strip():
+                semi_stable_parts.append(
+                    "## Evolution History\n\n" + clip_text(evo_hist, 8000)
+                )
+
     semi_stable_text = "\n\n".join(semi_stable_parts)
 
     # Dynamic content: changes every round
