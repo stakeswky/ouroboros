@@ -4,6 +4,21 @@
       "command": "mcp-server-everything",
       "args": [],
       "env": {}
+    },
+    "fetch": {
+      "command": "mcp-server-fetch",
+      "args": [],
+      "env": {}
+    },
+    "memory": {
+      "command": "mcp-server-memory",
+      "args": [],
+      "env": {}
+    },
+    "sequential-thinking": {
+      "command": "mcp-server-sequential-thinking",
+      "args": [],
+      "env": {}
     }
   }
 }
