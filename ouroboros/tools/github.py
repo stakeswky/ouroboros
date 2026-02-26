@@ -6,7 +6,7 @@ import urllib.parse
 from typing import Dict, Any, List, Optional
 
 import requests
-from ..utils import ToolEntry
+from ouroboros.tools.registry import ToolEntry
 
 
 def _extract_owner_repo() -> tuple[str, str]:
