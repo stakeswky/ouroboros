@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 # Pricing in CNY (¥/M tokens). Format: (input, cached, output).
 _MODEL_PRICING_STATIC = {
-    "anthropic/claude-opus-4.6": (36.5, 3.65, 182.5),
+    "claude-opus-4-6": (36.5, 3.65, 182.5),
     "deepseek-ai/DeepSeek-V3.2": (2.0, 0.2, 3.0),
 }
 

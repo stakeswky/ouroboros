@@ -37,9 +37,9 @@ TOTAL_BUDGET_LIMIT = 400.0  # ¥400 CNY
 OPENAI_API_KEY = OPENROUTER_API_KEY  # reuse for web search via oogg.top
 ANTHROPIC_API_KEY = ""
 
-MODEL_MAIN = "anthropic/claude-opus-4.6"
-MODEL_CODE = "anthropic/claude-opus-4.6"
-MODEL_LIGHT = "anthropic/claude-opus-4.6"
+MODEL_MAIN = "claude-opus-4-6"
+MODEL_CODE = "claude-opus-4-6"
+MODEL_LIGHT = "claude-opus-4-6"
 
 MAX_WORKERS = 3  # conservative for 1.9G RAM
 # SiliconFlow L1 rate limits

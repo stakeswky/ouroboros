@@ -171,7 +171,7 @@ class LLMClient:
     ) -> Tuple[str, Dict[str, Any]]:
         """Send a vision query with text + images."""
         if not model:
-            model = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-sonnet-4.6")
+            model = os.environ.get("OUROBOROS_MODEL", "claude-opus-4-6")
 
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
         for img in images:
@@ -199,10 +199,10 @@ class LLMClient:
         return text, usage
 
     def default_model(self) -> str:
-        return os.environ.get("OUROBOROS_MODEL", "anthropic/claude-opus-4.6")
+        return os.environ.get("OUROBOROS_MODEL", "claude-opus-4-6")
 
     def available_models(self) -> List[str]:
-        main = os.environ.get("OUROBOROS_MODEL", "anthropic/claude-opus-4.6")
+        main = os.environ.get("OUROBOROS_MODEL", "claude-opus-4-6")
         code = os.environ.get("OUROBOROS_MODEL_CODE", "")
         light = os.environ.get("OUROBOROS_MODEL_LIGHT", "")
         models = [main]
