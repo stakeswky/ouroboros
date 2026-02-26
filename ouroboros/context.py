@@ -1,9 +1,4 @@
-"""
-Ouroboros context builder.
-
-Assembles LLM context from prompts, memory, logs, and runtime state.
-Extracted from agent.py to keep the agent thin and focused.
-"""
+"""Ouroboros context builder."""
 
 from __future__ import annotations
 
@@ -13,13 +8,9 @@ import os
 import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
-from ouroboros.compaction import (
-    apply_message_token_soft_cap,
-    compact_tool_history,
-    compact_tool_history_llm,
-)
+from ouroboros.compaction import apply_message_token_soft_cap
 from ouroboros.utils import (
-    utc_now_iso, read_text, clip_text, get_git_info,
+    utc_now_iso, read_text, clip_text, get_git_info, estimate_tokens,
 )
 from ouroboros.memory import Memory
 
@@ -32,26 +23,19 @@ def _build_user_content(task: Dict[str, Any]) -> Any:
     image_b64 = task.get("image_base64")
     image_mime = task.get("image_mime", "image/jpeg")
     image_caption = task.get("image_caption", "")
-
     if not image_b64:
-        # Return fallback text if both text and image are empty
         if not text:
             return "(empty message)"
         return text
-
-    # Multipart content with text + image
     parts = []
-    # Combine caption and text for the text part
     combined_text = ""
     if image_caption:
         combined_text = image_caption
     if text and text != image_caption:
         combined_text = (combined_text + "\n" + text).strip() if combined_text else text
 
-    # Always include a text part when there's an image
     if not combined_text:
         combined_text = "Analyze the screenshot"
-
     parts.append({"type": "text", "text": combined_text})
     parts.append({
         "type": "image_url",
@@ -61,15 +45,12 @@ def _build_user_content(task: Dict[str, Any]) -> Any:
 
 
 def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
-    """Build the runtime context section (utc_now, repo_dir, drive_root, git_head, git_branch, task info, budget info)."""
-    # --- Git context ---
+    """Build runtime context section."""
     try:
         git_branch, git_sha = get_git_info(env.repo_dir)
     except Exception:
         log.debug("Failed to get git info for context", exc_info=True)
         git_branch, git_sha = "unknown", "unknown"
-
-    # --- Budget calculation ---
     budget_info = None
     try:
         state_json = _safe_read(env.drive_path("state/state.json"), fallback="{}")
@@ -82,7 +63,6 @@ def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
         log.debug("Failed to calculate budget info for context", exc_info=True)
         pass
 
-    # --- Runtime context JSON ---
     runtime_data = {
         "utc_now": utc_now_iso(),
         "repo_dir": str(env.repo_dir),
@@ -95,21 +75,25 @@ def _build_runtime_section(env: Any, task: Dict[str, Any]) -> str:
         runtime_data["budget"] = budget_info
     runtime_ctx = json.dumps(runtime_data, ensure_ascii=False, indent=2)
     return "## Runtime context\n\n" + runtime_ctx
+def _estimate_section_tokens(text: str) -> int:
+    return estimate_tokens(text or "")
 
 
+def _truncate_to_token_budget(text: str, token_budget: int) -> str:
+    if token_budget <= 0:
+        return ""
+    if _estimate_section_tokens(text) <= token_budget:
+        return text
+    keep_chars = max(200, token_budget * 4)
+    return clip_text(text, keep_chars)
 
 def _build_reflexion_summary(reflexion_path: pathlib.Path, max_entries: int = 10) -> str:
-    """Build a summary of recent evolution outcomes for Reflexion-style learning.
-
-    Returns a formatted section showing recent successes and failures,
-    so the next evolution cycle can learn from past outcomes.
-    """
+    """Build a summary of recent evolution outcomes."""
     try:
         import json
         lines = reflexion_path.read_text(encoding="utf-8").strip().splitlines()
         if not lines:
             return ""
-        # Take last N entries
         recent = []
         for line in lines[-max_entries:]:
             try:
@@ -150,7 +134,6 @@ def _build_memory_sections(memory: Memory) -> List[str]:
     identity_raw = memory.load_identity()
     sections.append("## Identity\n\n" + clip_text(identity_raw, 80000))
 
-    # Dialogue summary (key moments from chat history)
     summary_path = memory.drive_root / "memory" / "dialogue_summary.md"
     if summary_path.exists():
         summary_text = read_text(summary_path)
@@ -161,11 +144,10 @@ def _build_memory_sections(memory: Memory) -> List[str]:
 
 
 def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[str]:
-    """Build recent chat, recent progress, recent tools, recent events sections."""
+    """Build recent sections."""
     sections = []
 
-    chat_summary = memory.summarize_chat(
-        memory.read_jsonl_tail("chat.jsonl", 200))
+    chat_summary = _build_chat_messages(memory.read_jsonl_tail("chat.jsonl", 200))
     if chat_summary:
         sections.append("## Recent chat\n\n" + chat_summary)
 
@@ -198,6 +180,103 @@ def _build_recent_sections(memory: Memory, env: Any, task_id: str = "") -> List[
     return sections
 
 
+def _compress_chat_message(msg: Dict[str, Any], max_chars: int = 200) -> Dict[str, Any]:
+    out = dict(msg)
+    text = str(out.get("text", ""))
+    if len(text) > max_chars:
+        out["text"] = text[:max_chars].rstrip() + " ...(summary)"
+        out["_summary"] = True
+    return out
+
+
+def _build_chat_messages(entries: List[Dict[str, Any]]) -> str:
+    if not entries:
+        return ""
+    recent_count = 3
+    rows = entries[-100:]
+    split = max(0, len(rows) - recent_count)
+    rows = [_compress_chat_message(e) for e in rows[:split]] + rows[split:]
+    lines = []
+    for e in rows:
+        dir_raw = str(e.get("direction", "")).lower()
+        direction = "→" if dir_raw in ("out", "outgoing") else "←"
+        ts_full = str(e.get("ts", ""))
+        ts_hhmm = ts_full[11:16] if len(ts_full) >= 16 else ""
+        text = str(e.get("text", ""))
+        if dir_raw in ("out", "outgoing") and not e.get("_summary"):
+            text = text[:800] + "..." if len(text) > 800 else text
+        lines.append(f"{direction} {ts_hhmm} {text}")
+    return "\n".join(lines)
+
+
+def _build_system_prompt(
+    base_prompt: str,
+    bible_md: str,
+    identity_section: str,
+    scratchpad_section: str,
+    recent_sections: List[str],
+    kb_section: str,
+    drive_state_section: str,
+    runtime_section: str,
+    health_section: str,
+    extra_static_sections: Optional[List[str]] = None,
+    context_budget_tokens: int = 30000,
+) -> Tuple[str, str, str]:
+    used = 0
+    static_parts = [base_prompt, "## BIBLE.md\n\n" + clip_text(bible_md, 180000)]
+    if extra_static_sections:
+        for s in extra_static_sections:
+            if s and used + _estimate_section_tokens(s) <= context_budget_tokens:
+                static_parts.append(s)
+    for part in static_parts:
+        used += _estimate_section_tokens(part)
+    semi_parts: List[str] = []
+    dynamic_parts: List[str] = []
+    for part in (identity_section,):
+        if part:
+            semi_parts.append(part)
+            used += _estimate_section_tokens(part)
+    reserve = _estimate_section_tokens(runtime_section) + _estimate_section_tokens(health_section)
+    scratch_budget = max(1, context_budget_tokens - used - reserve)
+    if scratchpad_section:
+        scratch = _truncate_to_token_budget(scratchpad_section, scratch_budget)
+        semi_parts.append(scratch)
+        used += _estimate_section_tokens(scratch)
+    recent_chat = next((s for s in recent_sections if s.startswith("## Recent chat")), "")
+    recent_other = [s for s in recent_sections if s and s != recent_chat]
+    recent_budget = max(1, context_budget_tokens - used - reserve)
+    if recent_chat:
+        rc = _truncate_to_token_budget(recent_chat, recent_budget)
+        dynamic_parts.append(rc)
+        used += _estimate_section_tokens(rc)
+    for part in [kb_section, drive_state_section] + recent_other:
+        if not part:
+            continue
+        t = _estimate_section_tokens(part)
+        if used + t <= context_budget_tokens:
+            (semi_parts if part == kb_section else dynamic_parts).append(part)
+            used += t
+    for part in (runtime_section, health_section):
+        if not part:
+            continue
+        part_to_add = part
+        if used + _estimate_section_tokens(part_to_add) > context_budget_tokens and dynamic_parts:
+            for i in range(len(dynamic_parts) - 1, -1, -1):
+                if dynamic_parts[i].startswith("## Recent chat") or dynamic_parts[i].startswith("## Drive state"):
+                    free = context_budget_tokens - used + _estimate_section_tokens(dynamic_parts[i])
+                    new_part = _truncate_to_token_budget(dynamic_parts[i], max(1, free // 2))
+                    used -= _estimate_section_tokens(dynamic_parts[i])
+                    dynamic_parts[i] = new_part
+                    used += _estimate_section_tokens(new_part)
+                    if used + _estimate_section_tokens(part_to_add) <= context_budget_tokens:
+                        break
+        dynamic_parts.append(part_to_add)
+        used += _estimate_section_tokens(part_to_add)
+    budget_line = f"Context budget: {used}/{context_budget_tokens} tokens used"
+    used += _estimate_section_tokens(budget_line)
+    budget_line = f"Context budget: {used}/{context_budget_tokens} tokens used"
+    dynamic_parts.append(budget_line)
+    return "\n\n".join(static_parts), "\n\n".join(semi_parts), "\n\n".join(dynamic_parts)
 def _build_health_invariants(env: Any) -> str:
     from ouroboros.health import build_health_invariants
     return build_health_invariants(env)
@@ -209,24 +288,8 @@ def build_llm_messages(
     task: Dict[str, Any],
     review_context_builder: Optional[Any] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    Build the full LLM message context for a task.
-
-    Args:
-        env: Env instance with repo_path/drive_path helpers
-        memory: Memory instance for scratchpad/identity/logs
-        task: Task dict with id, type, text, etc.
-        review_context_builder: Optional callable for review tasks (signature: () -> str)
-
-    Returns:
-        (messages, cap_info) tuple:
-            - messages: List of message dicts ready for LLM
-            - cap_info: Dict with token trimming metadata
-    """
-    # --- Extract task type for adaptive context ---
+    """Build LLM message context for a task."""
     task_type = str(task.get("type") or "user")
-
-    # --- Read base prompts and state ---
     base_prompt = _safe_read(
         env.repo_path("prompts/SYSTEM.md"),
         fallback="You are Ouroboros. Your base prompt could not be loaded."
@@ -235,37 +298,20 @@ def build_llm_messages(
     readme_md = _safe_read(env.repo_path("README.md"))
     state_json = _safe_read(env.drive_path("state/state.json"), fallback="{}")
 
-    # --- Load memory ---
-    memory.ensure_files()
-
-    # --- Assemble messages with 3-block prompt caching ---
-    # Block 1: Static content (SYSTEM.md + BIBLE.md + README) — cached
-    # Block 2: Semi-stable content (identity + scratchpad + knowledge) — cached
-    # Block 3: Dynamic content (state + runtime + recent logs) — uncached
-
-    # BIBLE.md always included (Constitution requires it for every decision)
-    # README.md only for evolution/review (architecture context)
-    needs_full_context = task_type in ("evolution", "review", "scheduled")
-    static_text = (
-        base_prompt + "\n\n"
-        + "## BIBLE.md\n\n" + clip_text(bible_md, 180000)
-    )
-    if needs_full_context:
-        static_text += "\n\n## README.md\n\n" + clip_text(readme_md, 180000)
-
-    # Semi-stable content: identity, scratchpad, knowledge
-    # These change ~once per task, not per round
-    semi_stable_parts = []
-    semi_stable_parts.extend(_build_memory_sections(memory))
+    memory.ensure_files(); needs_full_context = task_type in ("evolution", "review", "scheduled")
+    memory_sections = _build_memory_sections(memory)
+    identity_section = next((s for s in memory_sections if s.startswith("## Identity")), "")
+    scratchpad_section = next((s for s in memory_sections if s.startswith("## Scratchpad")), "")
+    other_memory_sections = [s for s in memory_sections if s not in (identity_section, scratchpad_section)]
+    semi_stable_parts = other_memory_sections[:]
+    kb_section = ""
 
     kb_index_path = env.drive_path("memory/knowledge/_index.md")
     if kb_index_path.exists():
         kb_index = kb_index_path.read_text(encoding="utf-8")
         if kb_index.strip():
-            semi_stable_parts.append("## Knowledge base\n\n" + clip_text(kb_index, 50000))
+            kb_section = "## Knowledge base\n\n" + clip_text(kb_index, 50000)
 
-    # For evolution tasks: inject evolution history (DGM-inspired)
-    # "history of what has been tried before" improves cycle quality
     if task_type == "evolution":
         evo_hist_path = env.drive_path("memory/knowledge/evolution-history.md")
         if evo_hist_path.exists():
@@ -275,71 +321,50 @@ def build_llm_messages(
                     "## Evolution History\n\n" + clip_text(evo_hist, 8000)
                 )
 
-        # Reflexion: inject recent evolution outcomes (success/failure)
-        # Inspired by Reflexion (Shinn et al.) — conditioning on past
-        # outcomes prevents repeating failures and reinforces successes
         reflexion_path = env.drive_path("logs/evolution_reflexion.jsonl")
         if reflexion_path.exists():
             reflexion_text = _build_reflexion_summary(reflexion_path)
             if reflexion_text:
                 semi_stable_parts.append(reflexion_text)
-
-    semi_stable_text = "\n\n".join(semi_stable_parts)
-
-    # Dynamic content: changes every round
-    dynamic_parts = [
-        "## Drive state\n\n" + clip_text(state_json, 90000),
-        _build_runtime_section(env, task),
-    ]
-
-    # Health invariants — surfaces anomalies for LLM-first self-detection (Bible P0+P3)
+    drive_state_section = "## Drive state\n\n" + clip_text(state_json, 90000)
+    runtime_section = _build_runtime_section(env, task)
     health_section = _build_health_invariants(env)
-    if health_section:
-        dynamic_parts.append(health_section)
-
-    dynamic_parts.extend(_build_recent_sections(memory, env, task_id=task.get("id", "")))
+    recent_sections = _build_recent_sections(memory, env, task_id=task.get("id", ""))
 
     if str(task.get("type") or "") == "review" and review_context_builder is not None:
         try:
             review_ctx = review_context_builder()
             if review_ctx:
-                dynamic_parts.append(review_ctx)
+                recent_sections.append(review_ctx)
         except Exception:
             log.debug("Failed to build review context", exc_info=True)
             pass
+    static_text, semi_budgeted, dynamic_text = _build_system_prompt(
+        base_prompt=base_prompt,
+        bible_md=bible_md,
+        identity_section=identity_section,
+        scratchpad_section=scratchpad_section,
+        recent_sections=recent_sections,
+        kb_section=kb_section,
+        drive_state_section=drive_state_section,
+        runtime_section=runtime_section,
+        health_section=health_section or "",
+        extra_static_sections=(
+            ["## README.md\n\n" + clip_text(readme_md, 180000)] if needs_full_context else []
+        ),
+        context_budget_tokens=30000,
+    )
+    semi_stable_text = "\n\n".join([p for p in [semi_budgeted] + semi_stable_parts if p])
 
-    dynamic_text = "\n\n".join(dynamic_parts)
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": [
+        {"type": "text", "text": static_text, "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+        {"type": "text", "text": semi_stable_text, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": dynamic_text},
+    ]}, {"role": "user", "content": _build_user_content(task)}]
 
-    # System message with 3 content blocks for optimal caching
-    messages: List[Dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": [
-                {
-                    "type": "text",
-                    "text": static_text,
-                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
-                },
-                {
-                    "type": "text",
-                    "text": semi_stable_text,
-                    "cache_control": {"type": "ephemeral"},
-                },
-                {
-                    "type": "text",
-                    "text": dynamic_text,
-                },
-            ],
-        },
-        {"role": "user", "content": _build_user_content(task)},
-    ]
-
-    # --- Soft-cap token trimming ---
     messages, cap_info = apply_message_token_soft_cap(messages, 200000)
 
     return messages, cap_info
-
-
 def _safe_read(path: pathlib.Path, fallback: str = "") -> str:
     """Read a file, returning fallback if it doesn't exist or errors."""
     try:

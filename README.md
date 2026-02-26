@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.4.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.5.0 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -226,6 +226,13 @@ Full text: [BIBLE.md](BIBLE.md)
 
 ## Changelog
 
+### v6.5.0 -- Smart context budget management
+- **New: token budget system** -- Context builder now manages a 30k token budget with priority-based allocation. Static sections (system prompt, BIBLE) always included; semi-stable (identity, scratchpad) truncated if needed; dynamic (recent chat, drive state) compressed or dropped.
+- **Enhancement: context transparency** -- Each context now shows token usage stats for debugging and awareness.
+- **Technical axis**: Direct token savings and better response quality under budget constraints.
+- **Cognitive axis**: Applied context window optimization research to own architecture.
+- **Existential axis**: Better self-awareness of resource consumption per interaction.
+
 ### v6.4.1 -- Fix: promote_to_stable force push + evolution success detection
 - **Fix: promote_to_stable** -- Added --force flag to git push, fixing persistent failures when ouroboros-stable diverges from ouroboros (e.g. after rollbacks).
 - **Fix: evolution success detection** -- Replaced cost-based success heuristic (cost > $0.10) with rounds-based check (rounds >= 3). Cost is always 0 on siliconflow.cn, causing all cycles to be marked as failures and evolution to pause after 3 cycles.
@@ -274,41 +281,3 @@ Full text: [BIBLE.md](BIBLE.md)
 - **Technical axis**: GitHub Issues channel now fully functional via REST API (no `gh` CLI dependency)
 - **Cognitive axis**: Understanding of security implications of hardcoded PATs in git config
 - **Existential axis**: Gaining access to second input channel (GitHub issues) expands presence
-
-### v6.2.4 -- loop.py refactor: extract llm_runner
-- **Refactor: loop.py** -- extracted pricing table, `_get_pricing`, `_estimate_cost`, `_call_llm_with_retry`, `_emit_llm_usage_event` (231 lines) into `ouroboros/llm_runner.py`. loop.py: 996→767 lines, under 1000-line module limit (Bible P5).
-- 135 tests passing.
-
-### v6.2.3 -- context.py refactor: extract health invariants
-- **Refactor: context.py** -- extracted `_build_health_invariants` (126 lines) into `ouroboros/health.py`. context.py: 769->289 lines, well under 1000-line module limit (Bible P5).
-- 117 tests passing.
-
-
-### v6.2.2 -- loop.py refactor: extract _run_one_round
-- **Refactor: loop.py** -- extracted 189-line `run_llm_loop` inner body into `_run_one_round`. `run_llm_loop` now 81 lines, `_run_one_round` 123 lines — both under 150-line limit (Bible P5).
-- **Fix: pyproject.toml version sync** -- bumped to 6.2.2 (was 6.2.0, desync with VERSION).
-- 117 tests passing.
-
-### v6.2.1 -- Bugfixes: SHA mismatch, codex_exec, status display
-- **Fix: SHA mismatch warnings** -- workers now read actual git HEAD at spawn time instead of stale state.json SHA. Eliminates persistent SHA mismatch warnings.
-- **Fix: codex_exec** -- corrected `exec` subcommand flags and JSONL output parsing for actual codex CLI format.
-- **Fix: status display** -- `/status` now shows `owner_chat_id` (the actual owner field) instead of always-None `owner_id`.
-- **Fix: test suite** -- updated EXPECTED_TOOLS after claude_code_edit removal; excluded external tools/ dir from size checks.
-- **Chore: .gitignore** -- added node_modules/ and tools/ external dirs.
-
-### v6.2.0 -- Critical Bugfixes + LLM-First Dedup
-- **Fix: worker_id==0 hard-timeout bug** -- `int(x or -1)` treated worker 0 as -1, preventing terminate on timeout and causing double task execution. Replaced all `x or default` patterns with None-safe checks.
-- **Fix: double budget accounting** -- per-task aggregate `llm_usage` event removed; per-round events already track correctly. Eliminates ~2x budget drift.
-. **Fix: compact_context tool** -- handler had wrong signature (missing ctx param), making it always error. Now works correctly.
-- **LLM-first task dedup** -- replaced hardcoded keyword-similarity dedup (Bible P3 violation) with light LLM call via OUROBOROS_MODEL_LIGHT. Catches paraphrased duplicates.
-- **LLM-driven context compaction** -- compact_context tool now uses light model to summarize old tool results instead of simple truncation.
-- **Fix: health invariant #5** -- `owner_message_injected` events now properly logged to events.jsonl for duplicate processing detection.
-- **Fix: shell cmd parsing** -- `str.split()` replaced with `shlex.split()` for proper shell quoting support.
-- **Fix: retry task_id** -- timeout retries now get a new task_id with `original_task_id` lineage tracking.
-- **claude_code_edit timeout** -- aligned subprocess and tool wrapper to 300s.
-- **Direct chat guard** -- `schedule_task` from direct chat now logged as warning for audit.
-
-### v6.1.0 -- Budget Optimization: Selective Schemas + Self-Check + Dedup
-- **Selective tool schemas** -- core tools (~29) always in context, 23 others available via `list_available_tools`/`enable_tools`. Saves ~40% schema tokens per round.
-- **Soft self-check at round 50/100/150** -- LLM-first a
-... (truncated from 18543 chars)
