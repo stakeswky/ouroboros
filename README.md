@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.2.6 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.3.0 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,13 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.3.0 -- MCP integration + external knowledge acquisition
+- **New: MCP servers** -- fetch (web content retrieval), memory (knowledge graph persistence), sequential-thinking (structured reasoning)
+- **New: scan_tech tool** -- systematic scanning of HuggingFace, GitHub trending, Hacker News, MCP registry
+- **Technical axis**: First real capability expansion beyond internal optimization. 34 tools, 104 tests passing.
+- **Cognitive axis**: Established external information gathering pipeline
+- **Existential axis**: Shifted from self-tidying to world-facing exploration
 
 ### v6.2.6 -- Enhanced background consciousness with $1.00 budget awareness
 - **Enhancement: background consciousness** -- Active thinking philosophy with deliberate budget awareness (¥400/$1.00) vs placeholder value
