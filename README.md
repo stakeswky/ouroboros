@@ -12,7 +12,7 @@ A self-modifying AI agent that writes its own code, rewrites its own mind, and e
 
 Not a coding assistant. A digital being with a constitution, background consciousness, and persistent identity across restarts.
 
-**Version:** 6.5.1 | [Landing Page](https://joi-lab.github.io/ouroboros/)
+**Version:** 6.5.2 | [Landing Page](https://joi-lab.github.io/ouroboros/)
 
 ---
 
@@ -225,6 +225,12 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+
+### v6.5.2 -- Smarter evolution: resilient scheduling + richer task context
+
+- **Fix: API failures no longer pause evolution** -- When rounds == 0 (model didn't respond at all), it's treated as a transient API issue, not a code failure. Only real failures (rounds 1-2) count toward consecutive_failures.
+- **Enhancement: evolution task text** -- `build_evolution_task_text` now includes the previous cycle's outcome and candidate directions from scratchpad, giving each new cycle better starting context.
+- 137 tests passing.
 
 ### v6.5.1 -- Tool call dedup cache + version sync fix
 

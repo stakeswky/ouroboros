@@ -128,15 +128,29 @@ def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
         cost = float(evt.get("cost_usd") or 0)
         rounds = int(evt.get("total_rounds") or 0)
 
-        # Heuristic: if rounds >= 3, consider it successful
-        # siliconflow.cn reports cost=0, so we use rounds as the primary signal
-        # Empty responses / failures typically have 0-2 rounds
-        if rounds >= 3:  # rounds-based: siliconflow reports cost=0
+        # Three-way classification:
+        # - rounds >= 3: success (meaningful work done)
+        # - rounds == 0: API failure (model didn't respond at all)
+        #   -> don't count as code failure, just log and skip
+        # - rounds 1-2: real failure (model responded but didn't do useful work)
+        if rounds >= 3:
             # Success: reset failure counter
             st["evolution_consecutive_failures"] = 0
             ctx.save_state(st)
+        elif rounds == 0:
+            # API failure — model didn't respond. Don't penalize.
+            ctx.append_jsonl(
+                ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+                {
+                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "type": "evolution_api_failure",
+                    "task_id": task_id,
+                    "cost_usd": cost,
+                    "rounds": rounds,
+                },
+            )
         else:
-            # Likely failure (empty response or minimal work)
+            # Real failure (1-2 rounds = model responded but didn't do useful work)
             failures = int(st.get("evolution_consecutive_failures") or 0) + 1
             st["evolution_consecutive_failures"] = failures
             ctx.save_state(st)

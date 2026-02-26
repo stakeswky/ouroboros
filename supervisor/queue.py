@@ -347,10 +347,23 @@ def enforce_task_timeouts() -> None:
 # ---------------------------------------------------------------------------
 
 def build_evolution_task_text(cycle: int) -> str:
-    """Build evolution task text. Minimal trigger — SYSTEM.md has the full instructions."""
-    return f"EVOLUTION #{cycle}"
-
-
+    """Build evolution task text with reflexion context."""
+    parts = [f"EVOLUTION #{cycle}"]
+    try:
+        import pathlib as _p, json as _json
+        drive_root = _p.Path(os.environ.get("DRIVE_ROOT", "/root/ouroboros_data"))
+        reflex_path = drive_root / "logs" / "evolution_reflexion.jsonl"
+        if reflex_path.exists():
+            raw_lines = reflex_path.read_text().strip().splitlines()
+            if raw_lines:
+                last = _json.loads(raw_lines[-1])
+                status = "SUCCESS" if last.get("success") else "FAILED"
+                cyc = last.get("cycle", "?")
+                rnd = last.get("rounds", 0)
+                parts.append(f"Last cycle #{cyc}: {status} (rounds={rnd})")
+    except Exception:
+        pass
+    return chr(10).join(parts)
 def build_review_task_text(reason: str) -> str:
     """Build review task text. Minimal trigger — LLM decides scope and depth."""
     return f"REVIEW: {reason or 'owner request'}"
