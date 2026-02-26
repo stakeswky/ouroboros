@@ -27,7 +27,7 @@ install_apply_patch()
 # ----------------------------
 # 1) Config — all hardcoded for server deployment
 # ----------------------------
-OPENROUTER_API_KEY = "sk-oNk1Adz6q3FrVDVU3kT68ooQ97q0FT5mBfXXwHmIFyj5ls7f"
+OPENROUTER_API_KEY = "sk-mxpstxvjpwscbwcanxmctnwwshgcvrqtgjbevualkapcctqw"
 TELEGRAM_BOT_TOKEN = "7633641953:AAFI9FDpehDVS1rikp8i6D08eElpXo58xjc"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_USER = "stakeswky"
@@ -37,9 +37,9 @@ TOTAL_BUDGET_LIMIT = 999999.0  # unlimited
 OPENAI_API_KEY = OPENROUTER_API_KEY  # reuse for web search via oogg.top
 ANTHROPIC_API_KEY = ""
 
-MODEL_MAIN = "claude-sonnet-4-6"
-MODEL_CODE = "claude-sonnet-4-6"
-MODEL_LIGHT = "claude-sonnet-4-6"
+MODEL_MAIN = "deepseek-ai/DeepSeek-V3.2"
+MODEL_CODE = "deepseek-ai/DeepSeek-V3.2"
+MODEL_LIGHT = "deepseek-ai/DeepSeek-V3.2"
 
 MAX_WORKERS = 3  # conservative for 1.9G RAM
 BUDGET_REPORT_EVERY_MESSAGES = 10
@@ -399,7 +399,8 @@ while True:
         if chat_id != st.get("owner_chat_id"):
             continue
 
-        log_chat(chat_id, "user", text)
+        user_id = msg.get("from", {}).get("id", 0)
+        log_chat("user", chat_id, user_id, text)
 
         # Supervisor commands
         cmd_result = _handle_supervisor_command(text, chat_id, offset)
