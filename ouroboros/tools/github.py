@@ -204,98 +204,118 @@ def get_tools() -> List[ToolEntry]:
     return [
         ToolEntry(
             name="list_github_issues",
-            function=list_github_issues,
-            description="List GitHub issues for the repository",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "state": {
-                        "type": "string",
-                        "enum": ["open", "closed", "all"],
-                        "default": "all",
-                        "description": "Issue state: open, closed, or all"
+            schema={
+                "name": "list_github_issues",
+                "description": "List GitHub issues for the repository",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "state": {
+                            "type": "string",
+                            "enum": ["open", "closed", "all"],
+                            "default": "all",
+                            "description": "Issue state: open, closed, or all"
+                        },
+                        "label": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Filter by label (comma-separated for multiple)"
+                        }
                     },
-                    "label": {
-                        "type": "string",
-                        "default": "",
-                        "description": "Filter by label (comma-separated for multiple)"
-                    }
-                },
-                "required": []
-            }
+                    "required": []
+                }
+            },
+            handler=list_github_issues,
+            timeout_sec=30
         ),
         ToolEntry(
             name="get_github_issue",
-            function=get_github_issue,
-            description="Get a specific GitHub issue",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "issue_number": {
-                        "type": "integer",
-                        "description": "Issue number"
-                    }
-                },
-                "required": ["issue_number"]
-            }
+            schema={
+                "name": "get_github_issue",
+                "description": "Get a specific GitHub issue",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_number": {
+                            "type": "integer",
+                            "description": "Issue number"
+                        }
+                    },
+                    "required": ["issue_number"]
+                }
+            },
+            handler=get_github_issue,
+            timeout_sec=30
         ),
         ToolEntry(
             name="comment_on_issue",
-            function=comment_on_issue,
-            description="Add a comment to a GitHub issue",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "issue_number": {
-                        "type": "integer",
-                        "description": "Issue number"
+            schema={
+                "name": "comment_on_issue",
+                "description": "Add a comment to a GitHub issue",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_number": {
+                            "type": "integer",
+                            "description": "Issue number"
+                        },
+                        "body": {
+                            "type": "string",
+                            "description": "Comment text"
+                        }
                     },
-                    "body": {
-                        "type": "string",
-                        "description": "Comment text"
-                    }
-                },
-                "required": ["issue_number", "body"]
-            }
+                    "required": ["issue_number", "body"]
+                }
+            },
+            handler=comment_on_issue,
+            timeout_sec=30
         ),
         ToolEntry(
             name="close_github_issue",
-            function=close_github_issue,
-            description="Close a GitHub issue",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "issue_number": {
-                        "type": "integer",
-                        "description": "Issue number"
-                    }
-                },
-                "required": ["issue_number"]
-            }
+            schema={
+                "name": "close_github_issue",
+                "description": "Close a GitHub issue",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "issue_number": {
+                            "type": "integer",
+                            "description": "Issue number"
+                        }
+                    },
+                    "required": ["issue_number"]
+                }
+            },
+            handler=close_github_issue,
+            timeout_sec=30
         ),
         ToolEntry(
             name="create_github_issue",
-            function=create_github_issue,
-            description="Create a new GitHub issue",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Issue title"
+            schema={
+                "name": "create_github_issue",
+                "description": "Create a new GitHub issue",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Issue title"
+                        },
+                        "body": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Issue description"
+                        },
+                        "labels": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Comma-separated labels"
+                        }
                     },
-                    "body": {
-                        "type": "string",
-                        "default": "",
-                        "description": "Issue description"
-                    },
-                    "labels": {
-                        "type": "string",
-                        "default": "",
-                        "description": "Comma-separated labels"
-                    }
-                },
-                "required": ["title"]
-            }
+                    "required": ["title"]
+                }
+            },
+            handler=create_github_issue,
+            timeout_sec=30
         )
     ]
