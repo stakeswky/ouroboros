@@ -242,7 +242,7 @@ def get_tools() -> List[ToolEntry]:
         ToolEntry(
             name="get_github_issue",
             schema={
-                "name": "get_github_issues",
+                "name": "get_github_issue",
                 "description": "Get a specific GitHub issue",
                 "parameters": {
                     "type": "object",
@@ -310,7 +310,7 @@ def get_tools() -> List[ToolEntry]:
                     "properties": {
                         "title": {
                             "type": "string",
-                            "description": "Issue title"
+                            "description": "Issue title",
                         },
                         "body": {
                             "type": "string",
