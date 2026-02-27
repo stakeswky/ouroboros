@@ -225,6 +225,10 @@ Full text: [BIBLE.md](BIBLE.md)
 ---
 
 ## Changelog
+### v6.5.6 -- Fix budget tracking
+- Budget tracking now uses calculated/estimated cost instead of raw API cost (always 0 from oogg.top proxy)
+- Fixes spent_usd staying at 0 despite thousands of API calls
+
 ### v6.5.5 -- Extract health checks from agent.py
 - Extracted startup health/state verification logic from `ouroboros/agent.py` into new `ouroboros/health.py`
 - Kept `OuroborosAgent` health methods as thin wrappers for backward compatibility
