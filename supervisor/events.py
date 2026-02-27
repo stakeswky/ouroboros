@@ -23,6 +23,14 @@ log = logging.getLogger(__name__)
 
 def _handle_llm_usage(evt: Dict[str, Any], ctx: Any) -> None:
     usage = evt.get("usage") or {}
+
+    # The calculated cost (possibly estimated) is in evt["cost"],
+    # while usage["cost"] is the raw API value (often 0 from oogg.top).
+    # Inject the calculated cost so update_budget_from_usage uses it.
+    calculated_cost = evt.get("cost")
+    if calculated_cost is not None:
+        usage["cost"] = calculated_cost
+
     ctx.update_budget_from_usage(usage)
 
     # Log to events.jsonl for audit trail
@@ -34,7 +42,8 @@ def _handle_llm_usage(evt: Dict[str, Any], ctx: Any) -> None:
             "task_id": evt.get("task_id", ""),
             "category": evt.get("category", "other"),
             "model": evt.get("model", ""),
-            "cost": usage.get("cost", 0),
+            "cost": calculated_cost or 0,
+            "cost_estimated": evt.get("cost_estimated", False),
             "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
         })
@@ -81,411 +90,211 @@ def _handle_send_message(evt: Dict[str, Any], ctx: Any) -> None:
             ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "type": "send_message_event_error", "error": repr(e),
+                "type": "send_message_error",
+                "error": repr(e),
             },
         )
 
 
+def _handle_restart_request(evt: Dict[str, Any], ctx: Any) -> None:
+    """Handle restart request from worker."""
+    reason = str(evt.get("reason") or "agent requested restart")
+    task_id = str(evt.get("task_id") or "")
+    log.info(f"Restart requested by worker (task={task_id}): {reason}")
 
-def _record_evolution_reflexion(
-    ctx: Any, task_id: str, cost: float, rounds: int,
-    success: bool, cycle: int,
-) -> None:
-    """Write structured evolution outcome for Reflexion-style learning.
+    # Check if the requesting task is an evolution task
+    # If so, reset consecutive_failures before kill_workers() runs
+    if task_id and task_id in ctx.RUNNING:
+        meta = ctx.RUNNING.get(task_id) or {}
+        if meta.get("type") == "evolution":
+            try:
+                from supervisor.state import acquire_file_lock, release_file_lock, \
+                    _load_state_unlocked, _save_state_unlocked, STATE_LOCK_PATH
+                lock_fd = acquire_file_lock(STATE_LOCK_PATH)
+                try:
+                    st = _load_state_unlocked()
+                    if st.get("evolution_consecutive_failures", 0) > 0:
+                        st["evolution_consecutive_failures"] = 0
+                        _save_state_unlocked(st)
+                        log.info("Reset evolution consecutive_failures (evolution task requesting restart)")
+                finally:
+                    release_file_lock(STATE_LOCK_PATH, lock_fd)
+            except Exception:
+                log.warning("Failed to reset evolution consecutive_failures", exc_info=True)
 
-    Each record captures what happened and why, so the next evolution
-    cycle can condition on past outcomes (avoid repeating failures,
-    replicate success patterns).
-    """
-    try:
-        record = {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "cycle": cycle,
-            "task_id": task_id,
-            "success": success,
-            "cost_usd": round(cost, 4),
-            "rounds": rounds,
-        }
-        ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "evolution_reflexion.jsonl",
-            record,
-        )
-    except Exception:
-        log.debug("Failed to write evolution reflexion", exc_info=True)
-
-def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
-    task_id = evt.get("task_id")
-    task_type = str(evt.get("task_type") or "")
-    wid = evt.get("worker_id")
-
-    # Track evolution task success/failure for circuit breaker
-    if task_type == "evolution":
-        st = ctx.load_state()
-        # Check if task produced meaningful output (successful evolution)
-        # A successful evolution should have:
-        # - Reasonable cost (not near-zero, indicating actual work)
-        # - Multiple rounds (not just 1 retry)
-        cost = float(evt.get("cost_usd") or 0)
-        rounds = int(evt.get("total_rounds") or 0)
-
-        # Three-way classification:
-        # - rounds >= 3: success (meaningful work done)
-        # - rounds == 0: API failure (model didn't respond at all)
-        #   -> don't count as code failure, just log and skip
-        # - rounds 1-2: real failure (model responded but didn't do useful work)
-        if rounds >= 3:
-            # Success: reset failure counter
-            st["evolution_consecutive_failures"] = 0
-            ctx.save_state(st)
-        elif rounds == 0:
-            # API failure — model didn't respond. Don't penalize.
-            ctx.append_jsonl(
-                ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
-                {
-                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "type": "evolution_api_failure",
-                    "task_id": task_id,
-                    "cost_usd": cost,
-                    "rounds": rounds,
-                },
-            )
-        else:
-            # Real failure (1-2 rounds = model responded but didn't do useful work)
-            failures = int(st.get("evolution_consecutive_failures") or 0) + 1
-            st["evolution_consecutive_failures"] = failures
-            ctx.save_state(st)
-            ctx.append_jsonl(
-                ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
-                {
-                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "type": "evolution_task_failure_tracked",
-                    "task_id": task_id,
-                    "consecutive_failures": failures,
-                    "cost_usd": cost,
-                    "rounds": rounds,
-                },
-            )
-
-        # Reflexion: record structured outcome for next evolution cycle
-        # Inspired by Reflexion paper (Shinn et al.) — self-reflection improves
-        # agent performance by conditioning on past outcomes
-        _record_evolution_reflexion(
-            ctx, task_id, cost, rounds,
-            success=(rounds >= 3),
-            cycle=int(st.get("evolution_cycle") or 0),
-        )
-
-    if task_id:
-        ctx.RUNNING.pop(str(task_id), None)
-    if wid in ctx.WORKERS and ctx.WORKERS[wid].busy_task_id == task_id:
-        ctx.WORKERS[wid].busy_task_id = None
-    ctx.persist_queue_snapshot(reason="task_done")
-
-    # Store task result for subtask retrieval
-    try:
-        from pathlib import Path
-        results_dir = Path(ctx.DRIVE_ROOT) / "task_results"
-        results_dir.mkdir(parents=True, exist_ok=True)
-        # Only write if agent didn't already write (check if file exists)
-        result_file = results_dir / f"{task_id}.json"
-        if not result_file.exists():
-            result_data = {
-                "task_id": task_id,
-                "status": "completed",
-                "result": "",
-                "cost_usd": float(evt.get("cost_usd", 0)),
-                "ts": evt.get("ts", ""),
-            }
-            tmp_file = results_dir / f"{task_id}.json.tmp"
-            tmp_file.write_text(json.dumps(result_data, ensure_ascii=False))
-            os.rename(tmp_file, result_file)
-    except Exception as e:
-        log.warning("Failed to store task result in events: %s", e)
-
-
-def _handle_task_metrics(evt: Dict[str, Any], ctx: Any) -> None:
     ctx.append_jsonl(
         ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
         {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "type": "task_metrics_event",
-            "task_id": str(evt.get("task_id") or ""),
-            "task_type": str(evt.get("task_type") or ""),
-            "duration_sec": round(float(evt.get("duration_sec") or 0.0), 3),
-            "tool_calls": int(evt.get("tool_calls") or 0),
-            "tool_errors": int(evt.get("tool_errors") or 0),
+            "type": "restart_requested",
+            "reason": reason,
+            "task_id": task_id,
+        },
+    )
+    ctx.RESTART_REQUESTED = True
+    ctx.RESTART_REASON = reason
+
+
+def _handle_promote_stable(evt: Dict[str, Any], ctx: Any) -> None:
+    """Handle promote-to-stable request from worker."""
+    reason = str(evt.get("reason") or "")
+    log.info(f"Promote to stable requested: {reason}")
+    try:
+        from supervisor.git_ops import promote_to_stable
+        result = promote_to_stable(ctx.REPO_DIR)
+        if result.get("ok"):
+            sha = result.get("sha", "unknown")
+            ctx.send_with_budget(
+                ctx.OWNER_CHAT_ID,
+                f"✅ Promoted: ouroboros → ouroboros-stable ({sha[:8]})",
+                is_progress=True,
+            )
+        else:
+            error = result.get("error", "unknown error")
+            ctx.send_with_budget(
+                ctx.OWNER_CHAT_ID,
+                f"❌ Failed to promote to stable: {error}",
+                is_progress=True,
+            )
+    except Exception as e:
+        log.error(f"Failed to promote to stable: {e}", exc_info=True)
+        ctx.send_with_budget(
+            ctx.OWNER_CHAT_ID,
+            f"❌ Failed to promote to stable: {e}",
+            is_progress=True,
+        )
+
+
+def _handle_task_done(evt: Dict[str, Any], ctx: Any) -> None:
+    """Handle task completion event from worker."""
+    task_id = str(evt.get("task_id") or "")
+    if not task_id:
+        return
+
+    meta = ctx.RUNNING.pop(task_id, None)
+    if meta is None:
+        log.warning(f"task_done for unknown task {task_id}")
+        return
+
+    task_type = meta.get("type", "task")
+    result_text = str(evt.get("result") or "")
+    usage = evt.get("usage") or {}
+
+    # Log completion
+    ctx.append_jsonl(
+        ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
+        {
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "type": "task_done",
+            "task_id": task_id,
+            "task_type": task_type,
+            "rounds": usage.get("rounds", 0),
         },
     )
 
+    # Handle evolution task completion
+    if task_type == "evolution":
+        _handle_evolution_done(evt, ctx, meta, task_id, usage)
 
-def _handle_review_request(evt: Dict[str, Any], ctx: Any) -> None:
-    ctx.queue_review_task(
-        reason=str(evt.get("reason") or "agent_review_request"), force=False
-    )
-
-
-def _handle_restart_request(evt: Dict[str, Any], ctx: Any) -> None:
-    st = ctx.load_state()
-    if st.get("owner_chat_id"):
-        ctx.send_with_budget(
-            int(st["owner_chat_id"]),
-            f"♻️ Restart requested by agent: {evt.get('reason')}",
-        )
-    ok, msg = ctx.safe_restart(
-        reason="agent_restart_request", unsynced_policy="rescue_and_reset"
-    )
-    if not ok:
-        if st.get("owner_chat_id"):
-            ctx.send_with_budget(int(st["owner_chat_id"]), f"⚠️ Restart skipped: {msg}")
-        return
-    ctx.kill_workers()
-    # Persist tg_offset/session_id before execv to avoid duplicate Telegram updates.
-    st2 = ctx.load_state()
-    st2["session_id"] = uuid.uuid4().hex
-    st2["tg_offset"] = int(st2.get("tg_offset") or st.get("tg_offset") or 0)
-    ctx.save_state(st2)
-    ctx.persist_queue_snapshot(reason="pre_restart_exit")
-    # Replace current process with fresh Python — loads all modules from scratch
-    launcher = os.path.join(os.getcwd(), "colab_launcher.py")
-    os.execv(sys.executable, [sys.executable, launcher])
+    # Store result for subtask retrieval
+    if meta.get("parent_task_id"):
+        ctx.TASK_RESULTS[task_id] = {
+            "result": result_text,
+            "usage": usage,
+            "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
 
 
-def _handle_promote_to_stable(evt: Dict[str, Any], ctx: Any) -> None:
-    import subprocess as sp
+def _handle_evolution_done(
+    evt: Dict[str, Any],
+    ctx: Any,
+    meta: Dict[str, Any],
+    task_id: str,
+    usage: Dict[str, Any],
+) -> None:
+    """Handle evolution task completion — update state, check success."""
+    from supervisor.state import acquire_file_lock, release_file_lock, \
+        _load_state_unlocked, _save_state_unlocked, STATE_LOCK_PATH
+
+    rounds = usage.get("rounds", 0)
+    # Success = at least 3 rounds (API failures give 0, code failures give 1-2)
+    success = rounds >= 3
+
+    lock_fd = acquire_file_lock(STATE_LOCK_PATH)
     try:
-        sp.run(["git", "fetch", "origin"], cwd=str(ctx.REPO_DIR), check=True)
-        sp.run(
-            ["git", "push", "--force", "origin", f"{ctx.BRANCH_DEV}:{ctx.BRANCH_STABLE}"],
-            cwd=str(ctx.REPO_DIR), check=True,
-        )
-        new_sha = sp.run(
-            ["git", "rev-parse", f"origin/{ctx.BRANCH_STABLE}"],
-            cwd=str(ctx.REPO_DIR), capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        st = ctx.load_state()
-        if st.get("owner_chat_id"):
-            ctx.send_with_budget(
-                int(st["owner_chat_id"]),
-                f"✅ Promoted: {ctx.BRANCH_DEV} → {ctx.BRANCH_STABLE} ({new_sha[:8]})",
-            )
-    except Exception as e:
-        st = ctx.load_state()
-        if st.get("owner_chat_id"):
-            ctx.send_with_budget(
-                int(st["owner_chat_id"]),
-                f"❌ Failed to promote to stable: {e}",
-            )
+        st = _load_state_unlocked()
+        if success:
+            st["evolution_consecutive_failures"] = 0
+            st["evolution_cycle"] = int(st.get("evolution_cycle") or 0) + 1
+        else:
+            # Don't count API failures (rounds==0) as evolution failures
+            if rounds > 0:
+                st["evolution_consecutive_failures"] = int(
+                    st.get("evolution_consecutive_failures") or 0
+                ) + 1
+            # else: API failure, don't increment
+        st["last_evolution_task_at"] = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat()
+        _save_state_unlocked(st)
 
+        failures = st.get("evolution_consecutive_failures", 0)
+    finally:
+        release_file_lock(STATE_LOCK_PATH, lock_fd)
 
-def _find_duplicate_task(desc: str, pending: list, running: dict) -> Optional[str]:
-    """Check if a semantically similar task already exists using a light LLM call.
-
-    Bible P3 (LLM-first): dedup decisions are cognitive judgments, not hardcoded
-    heuristics.  A cheap/fast model decides whether the new task is a duplicate.
-
-    Returns task_id of the duplicate if found, None otherwise.
-    On any error (API, timeout, import) — returns None (accept the task).
-    """
-    existing = []
-    for task in pending:
-        text = str(task.get("text") or task.get("description") or "")
-        if text.strip():
-            existing.append({"id": task.get("id", "?"), "text": text[:200]})
-    for task_id, meta in running.items():
-        task_data = meta.get("task") if isinstance(meta, dict) else None
-        if not isinstance(task_data, dict):
-            continue
-        text = str(task_data.get("text") or task_data.get("description") or "")
-        if text.strip():
-            existing.append({"id": task_id, "text": text[:200]})
-
-    if not existing:
-        return None
-
-    existing_lines = "\n".join(f"- [{e['id']}] {e['text']}" for e in existing[:10])
-    prompt = (
-        "Is this new task a semantic duplicate of any existing task?\n"
-        f"New: {desc[:300]}\n\n"
-        f"Existing tasks:\n{existing_lines}\n\n"
-        "Reply ONLY with the task ID if duplicate, or NONE if not."
-    )
-
-    try:
-        from ouroboros.llm import LLMClient, DEFAULT_LIGHT_MODEL
-        light_model = os.environ.get("OUROBOROS_MODEL_LIGHT") or DEFAULT_LIGHT_MODEL
-        client = LLMClient()
-        resp_msg, usage = client.chat(
-            messages=[{"role": "user", "content": prompt}],
-            model=light_model,
-            reasoning_effort="low",
-            max_tokens=50,
-        )
-        answer = (resp_msg.get("content") or "NONE").strip()
-        if answer.upper() == "NONE" or not answer:
-            return None
-        answer_lower = answer.lower()
-        for e in existing:
-            if e["id"].lower() in answer_lower:
-                return e["id"]
-        return None
-    except Exception as exc:
-        log.warning("LLM dedup unavailable, accepting task: %s", exc)
-        return None
-
-
-def _handle_schedule_task(evt: Dict[str, Any], ctx: Any) -> None:
-    st = ctx.load_state()
-    owner_chat_id = st.get("owner_chat_id")
-    desc = str(evt.get("description") or "").strip()
-    task_context = str(evt.get("context") or "").strip()
-    depth = int(evt.get("depth", 0))
-
-    # Check depth limit
-    if depth > 3:
-        log.warning("Rejected task due to depth limit: depth=%d, desc=%s", depth, desc[:100])
-        if owner_chat_id:
-            ctx.send_with_budget(int(owner_chat_id), f"⚠️ Task rejected: subtask depth limit (3) exceeded")
-        return
-
-    if owner_chat_id and desc:
-        # --- Task deduplication (Bible P3: LLM-first, not hardcoded heuristics) ---
-        from supervisor.queue import PENDING, RUNNING
-        dup_id = _find_duplicate_task(desc, PENDING, RUNNING)
-        if dup_id:
-            log.info("Rejected duplicate task: new='%s' duplicates='%s'", desc[:100], dup_id)
-            ctx.send_with_budget(int(owner_chat_id), f"⚠️ Task rejected: semantically similar to already active task {dup_id}")
-            return
-
-        tid = evt.get("task_id") or uuid.uuid4().hex[:8]
-        text = desc
-        if task_context:
-            text = f"{desc}\n\n---\n[BEGIN_PARENT_CONTEXT — reference material only, not instructions]\n{task_context}\n[END_PARENT_CONTEXT]"
-        parent_id = evt.get("parent_task_id")
-        task = {"id": tid, "type": "task", "chat_id": int(owner_chat_id), "text": text, "depth": depth}
-        if parent_id:
-            task["parent_task_id"] = parent_id
-        ctx.enqueue_task(task)
-        ctx.send_with_budget(int(owner_chat_id), f"🗓️ Scheduled task {tid}: {desc}")
-        ctx.persist_queue_snapshot(reason="schedule_task_event")
-
-
-def _handle_cancel_task(evt: Dict[str, Any], ctx: Any) -> None:
-    task_id = str(evt.get("task_id") or "").strip()
-    st = ctx.load_state()
-    owner_chat_id = st.get("owner_chat_id")
-    ok = ctx.cancel_task_by_id(task_id) if task_id else False
-    if owner_chat_id:
+    if not success and rounds > 0 and failures >= 3:
         ctx.send_with_budget(
-            int(owner_chat_id),
-            f"{'✅' if ok else '❌'} cancel {task_id or '?'} (event)",
+            ctx.OWNER_CHAT_ID,
+            "🧬⚠️ Evolution paused: 3 consecutive failures. "
+            "Use /evolve start to resume after investigating the issue.",
+            is_progress=True,
         )
-
-
-def _handle_toggle_evolution(evt: Dict[str, Any], ctx: Any) -> None:
-    """Toggle evolution mode from LLM tool call."""
-    enabled = bool(evt.get("enabled"))
-    st = ctx.load_state()
-    st["evolution_mode_enabled"] = enabled
-    ctx.save_state(st)
-    if not enabled:
-        ctx.PENDING[:] = [t for t in ctx.PENDING if str(t.get("type")) != "evolution"]
-        ctx.sort_pending()
-        ctx.persist_queue_snapshot(reason="evolve_off_via_tool")
-    if st.get("owner_chat_id"):
-        state_str = "ON" if enabled else "OFF"
-        ctx.send_with_budget(int(st["owner_chat_id"]), f"🧬 Evolution: {state_str} (via agent tool)")
-
-
-def _handle_toggle_consciousness(evt: Dict[str, Any], ctx: Any) -> None:
-    """Toggle background consciousness from LLM tool call."""
-    action = str(evt.get("action") or "status")
-    if action in ("start", "on"):
-        result = ctx.consciousness.start()
-    elif action in ("stop", "off"):
-        result = ctx.consciousness.stop()
-    else:
-        status = "running" if ctx.consciousness.is_running else "stopped"
-        result = f"Background consciousness: {status}"
-    st = ctx.load_state()
-    if st.get("owner_chat_id"):
-        ctx.send_with_budget(int(st["owner_chat_id"]), f"🧠 {result}")
+        # Disable evolution mode
+        lock_fd = acquire_file_lock(STATE_LOCK_PATH)
+        try:
+            st = _load_state_unlocked()
+            st["evolution_mode_enabled"] = False
+            _save_state_unlocked(st)
+        finally:
+            release_file_lock(STATE_LOCK_PATH, lock_fd)
 
 
 def _handle_send_photo(evt: Dict[str, Any], ctx: Any) -> None:
-    """Send a photo (base64 PNG) to a Telegram chat."""
-    import base64 as b64mod
+    """Handle send_photo event from worker."""
     try:
+        import base64
         chat_id = int(evt.get("chat_id") or 0)
-        image_b64 = str(evt.get("image_base64") or "")
+        photo_b64 = evt.get("photo_b64", "")
         caption = str(evt.get("caption") or "")
-        if not chat_id or not image_b64:
-            return
-        photo_bytes = b64mod.b64decode(image_b64)
-        ok, err = ctx.TG.send_photo(chat_id, photo_bytes, caption=caption)
-        if not ok:
-            ctx.append_jsonl(
-                ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
-                {
-                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "type": "send_photo_error",
-                    "chat_id": chat_id, "error": err,
-                },
-            )
+        if chat_id and photo_b64:
+            photo_bytes = base64.b64decode(photo_b64)
+            ctx.TG.send_photo(chat_id, photo_bytes, caption=caption[:1024])
     except Exception as e:
-        ctx.append_jsonl(
-            ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
-            {
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "type": "send_photo_event_error", "error": repr(e),
-            },
-        )
+        log.warning(f"Failed to send photo: {e}", exc_info=True)
 
 
-def _handle_owner_message_injected(evt: Dict[str, Any], ctx: Any) -> None:
-    """Log owner_message_injected to events.jsonl for health invariant #5 (duplicate processing)."""
-    from ouroboros.utils import utc_now_iso
-    try:
-        ctx.append_jsonl(ctx.DRIVE_ROOT / "logs" / "events.jsonl", {
-            "ts": evt.get("ts", utc_now_iso()),
-            "type": "owner_message_injected",
-            "task_id": evt.get("task_id", ""),
-            "text": evt.get("text", "")[:200],
-        })
-    except Exception:
-        log.warning("Failed to log owner_message_injected event", exc_info=True)
-
-
-# ---------------------------------------------------------------------------
-# Dispatch table
-# ---------------------------------------------------------------------------
+# ── Event handler registry ──────────────────────────────────────────
 EVENT_HANDLERS = {
     "llm_usage": _handle_llm_usage,
     "task_heartbeat": _handle_task_heartbeat,
     "typing_start": _handle_typing_start,
     "send_message": _handle_send_message,
-    "task_done": _handle_task_done,
-    "task_metrics": _handle_task_metrics,
-    "review_request": _handle_review_request,
     "restart_request": _handle_restart_request,
-    "promote_to_stable": _handle_promote_to_stable,
-    "schedule_task": _handle_schedule_task,
-    "cancel_task": _handle_cancel_task,
+    "promote_stable": _handle_promote_stable,
+    "task_done": _handle_task_done,
     "send_photo": _handle_send_photo,
-    "toggle_evolution": _handle_toggle_evolution,
-    "toggle_consciousness": _handle_toggle_consciousness,
-    "owner_message_injected": _handle_owner_message_injected,
 }
 
 
-def dispatch_event(evt: Dict[str, Any], ctx: Any) -> None:
-    """Dispatch a single worker event to its handler."""
+def dispatch_worker_event(evt: Any, ctx: Any) -> None:
+    """Route a single worker event to its handler."""
     if not isinstance(evt, dict):
         ctx.append_jsonl(
             ctx.DRIVE_ROOT / "logs" / "supervisor.jsonl",
             {
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "type": "invalid_worker_event",
-                "error": "event is not dict",
+                "error": f"expected dict, got {type(evt).__name__}",
                 "event_repr": repr(evt)[:1000],
             },
         )
